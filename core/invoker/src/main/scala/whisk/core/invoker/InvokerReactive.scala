@@ -21,7 +21,6 @@ import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
-
 import akka.actor.ActorRef
 import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
@@ -34,13 +33,14 @@ import whisk.core.WhiskConfig
 import whisk.core.connector.ActivationMessage
 import whisk.core.connector.CompletionMessage
 import whisk.core.connector.MessageProducer
-import whisk.core.container.{ ContainerPool => OldContainerPool }
+import whisk.core.container.{ContainerPool => OldContainerPool}
 import whisk.core.container.Interval
 import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.PrewarmingConfig
 import whisk.core.containerpool.Run
 import whisk.core.containerpool.docker.DockerClientWithFileAccess
-import whisk.core.containerpool.docker.DockerContainer
+import whisk.core.containerpool.mesos.MesosTask
+//import whisk.core.containerpool.docker.DockerContainer
 import whisk.core.containerpool.docker.RuncClient
 import whisk.core.dispatcher.MessageHandler
 import whisk.core.entity._
@@ -86,14 +86,30 @@ class InvokerReactive(
     sys.addShutdownHook(cleanup())
 
     /** Factory used by the ContainerProxy to physically create a new container. */
-    val containerFactory = (tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize) => {
+    val containerFactory = (tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize, af:ActorRefFactory) => {
         val image = if (userProvidedImage) {
             actionImage.publicImageName
         } else {
             actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
         }
 
-        DockerContainer.create(
+        //if action is invokerHealthTestAction, use docker, otherwise use mesos
+
+
+
+
+//        DockerContainer.create(
+//            tid,
+//            image = image,
+//            userProvidedImage = userProvidedImage,
+//            memory = memory,
+//            cpuShares = OldContainerPool.cpuShare(config),
+//            environment = Map("__OW_API_HOST" -> config.wskApiHost),
+//            network = config.invokerContainerNetwork,
+//            dnsServers = config.invokerContainerDns,
+//            name = Some(name))
+        implicit val actorRefFactory = af
+        MesosTask.create(
             tid,
             image = image,
             userProvidedImage = userProvidedImage,

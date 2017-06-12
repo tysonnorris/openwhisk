@@ -65,7 +65,7 @@ class DockerClient(dockerHost: Option[String] = None)(executionContext: Executio
         runCmd("inspect", "--format", s"{{.NetworkSettings.Networks.${network}.IPAddress}}", id.asString).flatMap {
             _ match {
                 case "<no value>" => Future.failed(new NoSuchElementException)
-                case stdout       => Future.successful(ContainerIp(stdout))
+                case stdout       => Future.successful(ContainerIp(stdout, 8080))
             }
         }
 
@@ -101,8 +101,9 @@ class DockerClient(dockerHost: Option[String] = None)(executionContext: Executio
 case class ContainerId(val asString: String) {
     require(asString.nonEmpty, "ContainerId must not be empty")
 }
-case class ContainerIp(val asString: String) {
+case class ContainerIp(val asString: String, val port: Int) {
     require(asString.nonEmpty, "ContainerIp must not be empty")
+    require(port != 0, "Port must not be 0")
 }
 
 trait DockerApi {

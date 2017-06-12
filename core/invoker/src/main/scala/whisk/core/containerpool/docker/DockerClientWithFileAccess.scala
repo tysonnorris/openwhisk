@@ -115,7 +115,7 @@ class DockerClientWithFileAccess(
             val networks = json.fields("NetworkSettings").asJsObject.fields("Networks").asJsObject
             val specifiedNetwork = networks.fields(network).asJsObject
             val ipAddr = specifiedNetwork.fields("IPAddress")
-            ContainerIp(ipAddr.convertTo[String])
+            ContainerIp(ipAddr.convertTo[String], 8080)
         }
     }
 

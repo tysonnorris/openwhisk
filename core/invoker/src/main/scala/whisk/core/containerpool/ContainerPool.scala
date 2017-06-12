@@ -16,19 +16,14 @@
 
 package whisk.core.containerpool
 
-import scala.collection.mutable
-
-import akka.actor.Actor
-import akka.actor.ActorRef
-import akka.actor.ActorRefFactory
-import akka.actor.Props
+import akka.actor.{Actor, ActorRef, ActorRefFactory, Props}
 import whisk.common.AkkaLogging
 import whisk.core.dispatcher.ActivationFeed.ContainerReleased
-import whisk.core.entity.ByteSize
-import whisk.core.entity.CodeExec
-import whisk.core.entity.EntityName
-import whisk.core.entity.ExecutableWhiskAction
+import whisk.core.entity.{ByteSize, CodeExec, EntityName, ExecutableWhiskAction}
 import whisk.core.entity.size._
+
+import scala.collection.mutable
+import scala.collection.mutable.ListBuffer
 
 sealed trait WorkerState
 case object Busy extends WorkerState
@@ -73,37 +68,52 @@ class ContainerPool(
         }
     }
 
+    val pending = ListBuffer[EntityName]();
     def receive: Receive = {
         // A job to run on a container
         case r: Run =>
             // Schedule a job to a warm container
-            ContainerPool.schedule(r.action, r.msg.user.namespace, pool.toMap).orElse {
-                // Create a cold container iff there's space in the pool
-                if (pool.size < maxPoolSize) {
-                    takePrewarmContainer(r.action).orElse {
-                        Some(createContainer())
-                    }
-                } else None
-            }.orElse {
-                // Remove a container and create a new one for the given job
-                ContainerPool.remove(r.action, r.msg.user.namespace, pool.toMap).map { toDelete =>
-                    removeContainer(toDelete)
-                    createContainer()
-                }
-            } match {
-                case Some(actor) =>
-                    pool.get(actor) match {
-                        case Some(w) =>
-                            pool.update(actor, WorkerData(w.data, Busy))
-                            actor ! r
+//            pending.find( _ == r.action.name) match {
+//                case Some(_) =>
+//                    self ! r
+//                case None => {
+
+                    pending += r.action.name
+                    ContainerPool.schedule(r.action, r.msg.user.namespace, pool.toMap).orElse {
+                        logging.info(this, s"no free container for action ${r.action.name} user namespace ${r.msg.user.namespace}")
+                        // Create a cold container iff there's space in the pool
+                        if (pool.size < maxPoolSize) {
+                            logging.info(this, "taking or creating container")
+                            takePrewarmContainer(r.action).orElse {
+                                logging.info(this, "creating a container")
+                                Some(createContainer())
+                            }
+                        } else None
+                    }.orElse {
+                        logging.info(this, "removing a container")
+                        // Remove a container and create a new one for the given job
+                        ContainerPool.remove(r.action, r.msg.user.namespace, pool.toMap).map { toDelete =>
+                            removeContainer(toDelete)
+                            createContainer()
+                        }
+                    } match {
+                        case Some(actor) =>
+                            pool.get(actor) match {
+                                case Some(w) =>
+                                    pool.update(actor, WorkerData(w.data, Busy))
+                                    actor ! r
+                                case None =>
+                                    logging.error(this, "actor data not found")
+                                    self ! r
+                            }
                         case None =>
-                            logging.error(this, "actor data not found")
+                            logging.info(this, "no container available...")
+                            // "reenqueue" the request to find a container at a later point in time
                             self ! r
                     }
-                case None =>
-                    // "reenqueue" the request to find a container at a later point in time
-                    self ! r
-            }
+
+//                }
+//            }
 
         // Container is free to take more work
         case NeedWork(data: WarmedData) =>

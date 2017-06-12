@@ -22,11 +22,8 @@ import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.Success
 import scala.util.Failure
-
-import akka.actor.FSM
-import akka.actor.Props
-import akka.actor.Stash
-import akka.actor.Status.{ Failure => FailureMessage }
+import akka.actor.{ActorRefFactory, FSM, Props, Stash}
+import akka.actor.Status.{Failure => FailureMessage}
 import akka.pattern.pipe
 import spray.json._
 import spray.json.DefaultJsonProtocol._
@@ -84,7 +81,7 @@ case object ContainerRemoved
  * @param storeActivation a function storing the activation in a persistent store
  */
 class ContainerProxy(
-    factory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[Container],
+    factory: (TransactionId, String, ImageName, Boolean, ByteSize, ActorRefFactory) => Future[Container],
     sendActiveAck: (TransactionId, WhiskActivation) => Future[Any],
     storeActivation: (TransactionId, WhiskActivation) => Future[Any]) extends FSM[ContainerState, ContainerData] with Stash {
     implicit val ec = context.system.dispatcher
@@ -101,26 +98,33 @@ class ContainerProxy(
     when(Uninitialized) {
         // pre warm a container
         case Event(job: Start, _) =>
+            log.info("creating a new prewarm container");
             factory(
                 TransactionId.invokerWarmup,
                 ContainerProxy.containerName("prewarm", job.exec.kind),
                 job.exec.image,
                 job.exec.pull,
-                job.memoryLimit)
-                .map(container => PreWarmedData(container, job.exec.kind, job.memoryLimit))
+                job.memoryLimit,
+                context.system)
+                .map(container => {
+                    log.info(s"created container ${container}")
+                    PreWarmedData(container, job.exec.kind, job.memoryLimit)
+                })
                 .pipeTo(self)
 
             goto(Starting)
 
         // cold start
         case Event(job: Run, _) =>
+            log.info("creating a cold start container");
             implicit val transid = job.msg.transid
             factory(
                 job.msg.transid,
                 ContainerProxy.containerName(job.msg.user.namespace.name, job.action.name.name),
                 job.action.exec.image,
                 job.action.exec.pull,
-                job.action.limits.memory.megabytes.MB)
+                job.action.limits.memory.megabytes.MB,
+                context.system)
                 .andThen {
                     case Success(container) => self ! PreWarmedData(container, job.action.exec.kind, job.action.limits.memory.megabytes.MB)
                     case Failure(t) =>
@@ -143,13 +147,16 @@ class ContainerProxy(
     }
 
     when(Starting) {
+
         // container was successfully obtained
         case Event(data: PreWarmedData, _) =>
+            log.info("creation of prewarm success")
             context.parent ! NeedWork(data)
             goto(Started) using data
 
         // container creation failed
-        case Event(_: FailureMessage, _) =>
+        case Event(msg: FailureMessage, _) =>
+            log.info(s"creation of prewarm failed...{}", msg.cause)
             context.parent ! ContainerRemoved
             stop()
 
@@ -175,6 +182,7 @@ class ContainerProxy(
 
         // Run was successful
         case Event(data: WarmedData, _) =>
+            log.info("completed successfully...");
             context.parent ! NeedWork(data)
             goto(Ready) using data
 
@@ -342,7 +350,7 @@ class ContainerProxy(
 }
 
 object ContainerProxy {
-    def props(factory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[Container],
+    def props(factory: (TransactionId, String, ImageName, Boolean, ByteSize, ActorRefFactory) => Future[Container],
               ack: (TransactionId, WhiskActivation) => Future[Any],
               store: (TransactionId, WhiskActivation) => Future[Any]) = Props(new ContainerProxy(factory, ack, store))
 
