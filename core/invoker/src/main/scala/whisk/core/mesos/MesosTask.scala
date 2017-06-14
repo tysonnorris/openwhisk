@@ -1,0 +1,235 @@
+package whisk.core.mesos
+import java.time.Instant
+
+import akka.actor.{ActorRef, ActorRefFactory, ActorSystem}
+import akka.pattern.ask
+import akka.util.Timeout
+import org.apache.mesos.v1.Protos
+import org.apache.mesos.v1.Protos.ContainerInfo.DockerInfo
+import org.apache.mesos.v1.Protos.ContainerInfo.DockerInfo.PortMapping
+import org.apache.mesos.v1.Protos.Value.Ranges
+import org.apache.mesos.v1.Protos.{CommandInfo, ContainerInfo, Offer, Resource, TaskID, TaskInfo, TaskStatus, Value}
+import spray.json.DefaultJsonProtocol._
+import spray.json._
+import whisk.common.{Logging, LoggingMarkers, TransactionId}
+import whisk.core.container.{HttpUtils, Interval, RunResult}
+import whisk.core.containerpool.docker.{ContainerId, ContainerIp, RuncApi}
+import whisk.core.containerpool.{Container, InitializationError}
+import whisk.core.entity.size._
+import whisk.core.entity.{ActivationResponse, ByteSize}
+import whisk.core.invoker.ActionLogDriver
+import whisk.http.Messages
+
+import scala.collection.JavaConverters._
+import scala.concurrent.duration._
+import scala.concurrent.{ExecutionContext, Future}
+import scala.language.postfixOps
+import scala.util.{Failure, Success}
+
+/**
+  * Created by tnorris on 5/22/17.
+  */
+case class Environment()
+case class CreateContainer (image: String, memory:String, cpuShare:String)
+
+object MesosTask {
+  val taskLaunchTimeout = Timeout(15 seconds)
+  val taskDeleteTimeout = Timeout(10 seconds)
+  //implicit var ref:ActorRefFactory
+  implicit val system = ActorSystem( "spray-api-service" )
+  implicit val ec = system.dispatcher
+
+
+  def create(transid: TransactionId,
+             image: String,
+             userProvidedImage: Boolean = false,
+             memory: ByteSize = 256.MB,
+             cpuShares: Int = 0,
+             environment: Map[String, String] = Map(),
+             network: String = "bridge",
+             dnsServers: Seq[String] = Seq(),
+             name: Option[String] = None)(
+              implicit mesosClientActor: ActorRef, runc: RuncApi, ec: ExecutionContext, log: Logging, af:ActorRefFactory): Future[MesosTask] = {
+    implicit val tid = transid
+    //TODO: freeze payload form in case classes?
+    val createPayload = CreateContainer("whisk/nodejs6action:latest", "256m", "256")
+
+    log.info(this, "creating task for image...")
+
+    val payload = containerInitializerPayload
+    log.info(this, s"task creation payload is: ${containerInitializerPayload.toString()}")
+
+
+
+    val taskId = s"task-0-${Instant.now.getEpochSecond}"
+
+    val task = TaskReqs(taskId, image, 0.1, 24, 8080)
+
+    val launched:Future[TaskDetails] = mesosClientActor.ask(SubmitTask(task))(taskLaunchTimeout).mapTo[TaskDetails]
+
+
+    launched.map (taskDetails => {
+      log.info(this, s"launched task with state ${taskDetails.taskStatus.getState}")
+      val taskHost = "10.0.2.2"//taskDetails.taskStatus.getContainerStatus.getNetworkInfos(0).getIpAddresses(0)
+      val taskPort = taskDetails.taskInfo.getResourcesList.asScala.filter(_.getName == "ports").iterator.next().getRanges.getRange(0).getBegin.toInt
+      log.info(this, s"ip was ${taskHost} port was ${taskPort}")
+      val containerIp = new ContainerIp(taskHost,taskPort)
+      val containerId = new ContainerId(taskId);
+      new MesosTask(containerId, containerIp, taskId, mesosClientActor)
+    }) recover {
+      case t => throw new Exception(t)
+    }
+
+
+  }
+  def containerInitializerPayload: JsObject = {
+    val env = JsObject("__OW_API_HOST" -> JsString("my.host.name"))
+    val container = JsObject("image" -> JsString("whisk/nodejs6action:latest"), "memory" -> JsString("128m"), "cpuShares" -> JsString("128"), "environment" -> env)
+    JsObject("container" -> container)
+  }
+  def buildTask(reqs:TaskReqs, offer:Offer):TaskInfo = {
+    val containerPort = reqs.port
+    val hostPort = offer.getResourcesList.asScala
+      .filter(res => res.getName == "ports").iterator.next().getRanges.getRange(0).getBegin.toInt
+    val agentHost = offer.getHostname
+    val dockerImage = reqs.dockerImage
+
+    val task = TaskInfo.newBuilder
+      .setName("test")
+      .setTaskId(TaskID.newBuilder
+        .setValue(reqs.taskId))
+      .setAgentId(offer.getAgentId)
+      .setCommand(CommandInfo.newBuilder
+        .setEnvironment(Protos.Environment.newBuilder
+          .addVariables(Protos.Environment.Variable.newBuilder
+            .setName("__OW_API_HOST")
+            .setValue(agentHost)))
+        .setShell(false)
+        .build())
+      .setContainer(ContainerInfo.newBuilder
+        .setType(ContainerInfo.Type.DOCKER)
+        .setDocker(DockerInfo.newBuilder
+          .setImage(dockerImage)
+          .setNetwork(DockerInfo.Network.BRIDGE)
+          .addPortMappings(PortMapping.newBuilder
+            .setContainerPort(containerPort)
+            .setHostPort(hostPort)
+            .build)
+        ).build())
+      .addResources(Resource.newBuilder()
+        .setName("ports")
+        .setType(Value.Type.RANGES)
+        .setRanges(Ranges.newBuilder()
+          .addRange(Value.Range.newBuilder()
+            .setBegin(hostPort)
+            .setEnd(hostPort))))
+      .addResources(Resource.newBuilder
+        .setName("cpus")
+        .setRole("*")
+        .setType(Value.Type.SCALAR)
+        .setScalar(Value.Scalar.newBuilder
+          .setValue(reqs.cpus)))
+      .addResources(Resource.newBuilder
+        .setName("mem")
+        .setRole("*")
+        .setType(Value.Type.SCALAR)
+        .setScalar(Value.Scalar.newBuilder
+          .setValue(reqs.mem)))
+      .build
+    task
+  }
+}
+
+object JsonFormatters extends DefaultJsonProtocol{
+  implicit val createContainerJson = jsonFormat3(CreateContainer)
+}
+class MesosTask(id: ContainerId, ip: ContainerIp, taskId: String, mesosClientActor: ActorRef)(
+  implicit ec: ExecutionContext, logger: Logging, af:ActorRefFactory) extends Container with ActionLogDriver {//extends DockerContainer(id, ip) {
+
+  /** HTTP connection to the container, will be lazily established by callContainer */
+  private var httpConnection: Option[HttpUtils] = None
+
+  /** Stops the container from consuming CPU cycles. */
+  override def suspend()(implicit transid: TransactionId): Future[Unit] = {
+    //suspend not supported
+    Future(Unit)
+  }
+
+  /** Dual of halt. */
+  override def resume()(implicit transid: TransactionId): Future[Unit] = {
+    //resume not supported
+    Future(Unit)
+  }
+
+  /** Completely destroys this instance of the container. */
+  override def destroy()(implicit transid: TransactionId): Future[Unit] = {
+    mesosClientActor.ask(DeleteTask(taskId))(MesosTask.taskDeleteTimeout).mapTo[TaskStatus].map(taskStatus => {
+      logger.info(this, s"task killed ended with state ${taskStatus.getState}")
+    }) recover {
+      case t => throw new Exception(t)
+    }
+  }
+
+  def initialize(initializer: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[Interval] = {
+    val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_INIT, s"sending initialization to $id $ip")
+
+    val body = JsObject("value" -> initializer)
+    callContainer("/init", body, timeout, retry = true).andThen { // never fails
+      case Success(r: RunResult) =>
+        transid.finished(this, start.copy(start = r.interval.start), s"initialization result: ${r.toBriefString}", endTime = r.interval.end)
+      case Failure(t) =>
+        transid.failed(this, start, s"initializiation failed with $t")
+    }.flatMap { result =>
+      if (result.ok) {
+        Future.successful(result.interval)
+      } else if (result.interval.duration >= timeout) {
+        Future.failed(InitializationError(result.interval, ActivationResponse.applicationError(Messages.timedoutActivation(timeout, true))))
+      } else {
+        Future.failed(InitializationError(result.interval, ActivationResponse.processInitResponseContent(result.response, logger)))
+      }
+    }
+  }
+
+  def run(parameters: JsObject, environment: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[(Interval, ActivationResponse)] = {
+    val actionName = environment.fields.get("action_name").map(_.convertTo[String]).getOrElse("")
+    val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_RUN, s"sending arguments to $actionName at $id $ip")
+
+    val parameterWrapper = JsObject("value" -> parameters)
+    val body = JsObject(parameterWrapper.fields ++ environment.fields)
+    callContainer("/run", body, timeout, retry = false).andThen { // never fails
+      case Success(r: RunResult) =>
+        transid.finished(this, start.copy(start = r.interval.start), s"running result: ${r.toBriefString}", endTime = r.interval.end)
+      case Failure(t) =>
+        transid.failed(this, start, s"run failed with $t")
+    }.map { result =>
+      val response = if (result.interval.duration >= timeout) {
+        ActivationResponse.applicationError(Messages.timedoutActivation(timeout, false))
+      } else {
+        ActivationResponse.processRunResponseContent(result.response, logger)
+      }
+
+      (result.interval, response)
+    }
+  }
+
+  /** Obtains logs up to a given threshold from the container. Optionally waits for a sentinel to appear. */
+  override def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Future[Vector[String]] = {
+    Future{
+      Vector("log retrieval not implemented")
+    }
+  }
+  protected def callContainer(path: String, body: JsObject, timeout: FiniteDuration, retry: Boolean = false): Future[RunResult] = {
+    val started = Instant.now()
+    val http = httpConnection.getOrElse {
+      val conn = new HttpUtils(s"${ip.asString}:${ip.port}", timeout, 1.MB)
+      httpConnection = Some(conn)
+      conn
+    }
+    Future {
+      http.post(path, body, retry)
+    }.map { response =>
+      val finished = Instant.now()
+      RunResult(Interval(started, finished), response)
+    }
+  }
+}
