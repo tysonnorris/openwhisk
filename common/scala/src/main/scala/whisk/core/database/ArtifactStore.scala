@@ -16,25 +16,30 @@
 
 package whisk.core.database
 
-import scala.concurrent.ExecutionContext
-import scala.concurrent.Future
-
 import akka.http.scaladsl.model._
 import akka.stream.scaladsl._
 import akka.util.ByteString
-import spray.json.JsObject
-import whisk.common.Logging
-import whisk.common.TransactionId
+import spray.json.{JsObject, RootJsonFormat}
+import whisk.common.{Logging, TransactionId}
+import whisk.core.WhiskConfig
 import whisk.core.entity.DocInfo
+import whisk.spi.Spi
+
+import scala.concurrent.{ExecutionContext, Future}
+
 
 /** Basic client to put and delete artifacts in a data store. */
-trait ArtifactStore[DocumentAbstraction] {
+abstract class ArtifactStore[DocumentAbstraction] extends Spi {
 
     /** Execution context for futures */
     protected[core] implicit val executionContext: ExecutionContext
 
-    implicit val logging: Logging
+    //implicit val logging: Logging
+    override protected[core] def logging:Logging = super.logging
 
+    //need an init function for anything unavailable from super.config or super.system (those can be set via lazy val)
+
+    def init(name: WhiskConfig => String, jsonFormat: RootJsonFormat[DocumentAbstraction]):Unit
     /**
      * Puts (saves) document to database using a future.
      * If the operation is successful, the future completes with DocId else an appropriate exception.

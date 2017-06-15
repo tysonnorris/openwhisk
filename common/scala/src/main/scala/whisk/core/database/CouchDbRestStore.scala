@@ -16,11 +16,6 @@
 
 package whisk.core.database
 
-import scala.concurrent.Await
-import scala.concurrent.Future
-import scala.concurrent.duration._
-
-import akka.actor.ActorSystem
 import akka.event.Logging.ErrorLevel
 import akka.http.scaladsl.model._
 import akka.stream.scaladsl._
@@ -29,10 +24,15 @@ import spray.json._
 import whisk.common.Logging
 import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
+import whisk.core.WhiskConfig
 import whisk.core.entity.DocInfo
 import whisk.core.entity.DocRevision
 import whisk.core.entity.WhiskDocument
 import whisk.http.Messages
+
+import scala.concurrent.Await
+import scala.concurrent.Future
+import scala.concurrent.duration._
 
 /**
  * Basic client to put and delete artifacts in a data store.
@@ -45,19 +45,41 @@ import whisk.http.Messages
  * @param dbName the name of the database to operate on
  * @param serializerEvidence confirms the document abstraction is serializable to a Document with an id
  */
-class CouchDbRestStore[DocumentAbstraction <: DocumentSerializer](
-    dbProtocol: String,
-    dbHost: String,
-    dbPort: Int,
-    dbUsername: String,
-    dbPassword: String,
-    dbName: String)(implicit system: ActorSystem, val logging: Logging, jsonFormat: RootJsonFormat[DocumentAbstraction])
+class CouchDbRestStore[DocumentAbstraction <: DocumentSerializer]
     extends ArtifactStore[DocumentAbstraction]
     with DefaultJsonProtocol {
 
-    protected[core] implicit val executionContext = system.dispatcher
 
-    private val client: CouchDbRestClient = new CouchDbRestClient(dbProtocol, dbHost, dbPort.toInt, dbUsername, dbPassword, dbName)
+    def init(name: WhiskConfig => String, jsonFormat: RootJsonFormat[DocumentAbstraction]): Unit ={
+
+        require(config != null && config.isValid, "config is undefined or not valid")
+        require(config.dbProvider == "Cloudant" || config.dbProvider == "CouchDB", "Unsupported db.provider: " + config.dbProvider)
+        assume(Set(config.dbProtocol, config.dbHost, config.dbPort, config.dbUsername, config.dbPassword, name(config)).forall(_.nonEmpty), "At least one expected property is missing")
+
+        this.name = name
+        this.jsonFormat = jsonFormat
+
+        logging.info(this, "done with init...")
+    }
+
+
+    //vals must be lazy since config & system will not be injected till after construction
+    lazy override implicit val config = super.config
+    lazy override implicit val system = super.system
+    lazy implicit val lazyLogging: Logging = logging
+    lazy val dbProtocol: String = config.dbProtocol
+    lazy val dbHost: String = config.dbHost
+    lazy val dbPort: Int = config.dbPort.toInt
+    lazy val dbUsername: String = config.dbUsername
+    lazy val dbPassword: String = config.dbPassword
+    lazy val dbName: String = name(config)
+    lazy protected[core] implicit val executionContext = system.dispatcher
+    lazy private val client: CouchDbRestClient = new CouchDbRestClient(dbProtocol, dbHost, dbPort.toInt, dbUsername, dbPassword, dbName)
+
+    //set these during init, then used for lazy val init
+    var name:WhiskConfig => String = null
+    var jsonFormat: RootJsonFormat[DocumentAbstraction] = null
+
 
     override protected[database] def put(d: DocumentAbstraction)(implicit transid: TransactionId): Future[DocInfo] = {
         val asJson = d.toDocumentRecord

@@ -21,7 +21,6 @@ import java.time.Instant
 import scala.concurrent.Future
 import scala.language.postfixOps
 import scala.util.Try
-
 import akka.actor.ActorSystem
 import spray.json.JsObject
 import spray.json.JsString
@@ -39,9 +38,11 @@ import whisk.core.WhiskConfig.dbProvider
 import whisk.core.WhiskConfig.dbUsername
 import whisk.core.WhiskConfig.dbWhisk
 import whisk.core.database.ArtifactStore
-import whisk.core.database.CouchDbRestStore
 import whisk.core.database.DocumentRevisionProvider
 import whisk.core.database.DocumentSerializer
+import whisk.spi.SpiProvider
+
+import scala.reflect.ClassTag
 
 package object types {
     type AuthStore = ArtifactStore[WhiskAuth]
@@ -89,14 +90,18 @@ protected[core] object Util {
     def makeStore[D <: DocumentSerializer](config: WhiskConfig, name: WhiskConfig => String)(
         implicit jsonFormat: RootJsonFormat[D],
         actorSystem: ActorSystem,
-        logging: Logging): ArtifactStore[D] = {
-        require(config != null && config.isValid, "config is undefined or not valid")
-        require(config.dbProvider == "Cloudant" || config.dbProvider == "CouchDB", "Unsupported db.provider: " + config.dbProvider)
-        assume(Set(config.dbProtocol, config.dbHost, config.dbPort, config.dbUsername, config.dbPassword, name(config)).forall(_.nonEmpty), "At least one expected property is missing")
-
-        new CouchDbRestStore[D](config.dbProtocol, config.dbHost, config.dbPort.toInt, config.dbUsername, config.dbPassword, name(config))
+        logging: Logging,
+        tag: ClassTag[D]): ArtifactStore[D] = {
+        logging.info(this, s"instantiating store via spi for ArtifactStore[${tag.runtimeClass.getName}]")
+        val store = new ArtifactStoreProvider[D](config, logging).apply(actorSystem)
+        //use init function for anything that cannot be configured via WhiskConfig or ActorSystem
+        store.init(name, jsonFormat)
+        store
     }
 }
+
+private class ArtifactStoreProvider[D <: DocumentSerializer](val config:WhiskConfig, val logging:Logging)
+  extends SpiProvider[ArtifactStore[D]](configKey="whisk.spi.artifact-store")
 
 object WhiskAuthStore {
     def requiredProperties =
@@ -137,7 +142,7 @@ object WhiskEntityStore {
             dbWhisk -> null)
 
     def datastore(config: WhiskConfig)(implicit system: ActorSystem, logging: Logging) =
-        Util.makeStore[WhiskEntity](config, _.dbWhisk)(WhiskEntityJsonFormat, system, logging)
+        Util.makeStore[WhiskEntity](config, _.dbWhisk)(WhiskEntityJsonFormat, system, logging, ClassTag[WhiskEntity](WhiskEntity.getClass))
 }
 
 object WhiskActivationStore {
