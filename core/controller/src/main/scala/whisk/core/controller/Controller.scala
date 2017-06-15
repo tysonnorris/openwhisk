@@ -16,8 +16,6 @@
 
 package whisk.core.controller
 
-import scala.concurrent.Await
-import scala.concurrent.duration.DurationInt
 import akka.actor.Actor
 import akka.actor.ActorContext
 import akka.actor.ActorSystem
@@ -25,22 +23,26 @@ import akka.japi.Creator
 import spray.http.StatusCodes._
 import spray.http.Uri
 import spray.httpx.SprayJsonSupport._
-import spray.json._
 import spray.json.DefaultJsonProtocol._
+import spray.json._
 import spray.routing.Directive.pimpApply
 import spray.routing.Route
-import whisk.common.{AkkaLogging, Logging, LoggingMarkers, TransactionCounter, TransactionId}
+import whisk.common.AkkaLogging
+import whisk.common.Logging
+import whisk.common.LoggingMarkers
+import whisk.common.TransactionId
 import whisk.core.WhiskConfig
-import whisk.core.entitlement._
 import whisk.core.entitlement.EntitlementProvider
-import whisk.core.entity._
-import whisk.core.entity.ExecManifest.Runtimes
+import whisk.core.entitlement._
 import whisk.core.entity.ActivationId.ActivationIdGenerator
+import whisk.core.entity.ExecManifest.Runtimes
+import whisk.core.entity._
 import whisk.core.loadBalancer.LoadBalancerService
 import whisk.http.BasicHttpService
 import whisk.http.BasicRasService
 
-import scala.util.{Failure, Success}
+import scala.concurrent.Await
+import scala.concurrent.duration.DurationInt
 
 /**
  * The Controller is the service that provides the REST API for OpenWhisk.
@@ -129,32 +131,6 @@ class Controller(
 
     // controller top level info
     private val info = Controller.info(whiskConfig, runtimes, List(apiv1.basepath()))
-}
-
-object TestApp extends TransactionCounter {
-    def main(args: Array[String]): Unit = {
-        implicit val actorSystem = ActorSystem("testapp")
-        implicit val logger = new AkkaLogging(akka.event.Logging.getLogger(actorSystem, this))
-
-
-        def requiredProperties = Map(WhiskConfig.servicePort -> 8080.toString) ++
-          ExecManifest.requiredProperties ++
-          RestApiCommons.requiredProperties ++
-          LoadBalancerService.requiredProperties ++
-          EntitlementProvider.requiredProperties
-
-        val whiskConfig = new WhiskConfig(requiredProperties)
-        val entityStore = WhiskEntityStore.datastore(whiskConfig)
-        println("entityStore:" + entityStore)
-        implicit val transactionId = transid()
-        implicit val ec = actorSystem.dispatcher
-        WhiskAction.get(entityStore, DocId("123-abc"), DocRevision("456"), fromCache = false) onComplete {
-            case Success(action) =>
-                logger.info(this, s"found document ${action}...")
-            case Failure(t) =>
-                logger.error(this, "failed to locate document...")
-        }
-    }
 }
 
 /**
