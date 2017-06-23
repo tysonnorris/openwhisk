@@ -35,6 +35,7 @@ import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
 import akka.pattern.ask
 import akka.util.Timeout
+import scaldi.Injector
 import whisk.common.ConsulClient
 import whisk.common.Logging
 import whisk.common.LoggingMarkers
@@ -42,13 +43,16 @@ import whisk.common.TransactionId
 import whisk.core.WhiskConfig
 import whisk.core.WhiskConfig._
 import whisk.core.connector.MessagingProvider
-import whisk.core.connector.{ ActivationMessage, CompletionMessage }
+import whisk.core.connector.{ActivationMessage, CompletionMessage}
 import whisk.core.connector.MessageProducer
 import whisk.core.database.NoDocumentException
 import whisk.core.entity.{ActivationId, CodeExec, WhiskAction, WhiskActivation}
 import whisk.core.entity.InstanceId
 import whisk.core.entity.WhiskAction
 import whisk.core.entity.types.EntityStore
+import whisk.spi.SpiFactoryModule
+import whisk.spi.SpiModule
+
 import scala.annotation.tailrec
 
 trait LoadBalancer {
@@ -378,6 +382,17 @@ object LoadBalancerService {
     }
 
 }
+
+class InvokerLoadBalancerServiceProvider(config: WhiskConfig, instance: InstanceId, entityStore: EntityStore)(implicit val actorSystem: ActorSystem, logging: Logging) extends LoadBalancerProvider {
+    override def getLoadBalancer(config: WhiskConfig, instance: InstanceId, entityStore: EntityStore): LoadBalancer =
+        new LoadBalancerService(config, instance, entityStore)(actorSystem, logging)
+}
+class LoadBalancerServiceModule extends SpiFactoryModule[LoadBalancerProvider]{
+    override def getInstance(implicit injector: Injector): LoadBalancerProvider = {
+        new InvokerLoadBalancerServiceProvider(inject[WhiskConfig], inject[InstanceId], inject[EntityStore])(inject[ActorSystem], inject[Logging])
+    }
+}
+
 
 private case class ActiveAckTimeout(activationId: ActivationId) extends TimeoutException
 private case class LoadBalancerException(msg: String) extends Throwable(msg)

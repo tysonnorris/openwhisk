@@ -29,6 +29,7 @@ import whisk.core.entity.ExecManifest
 import whisk.core.entity.InstanceId
 import whisk.core.entity.WhiskAction
 import whisk.core.entity.WhiskEntityStore
+import whisk.core.loadBalancer.LoadBalancerProvider
 import whisk.core.loadBalancer.LoadBalancerService
 import whisk.spi.SharedModule
 import whisk.spi.SharedModules
@@ -54,9 +55,12 @@ object SpiTest extends TransactionCounter {
 
     val whiskConfig = new WhiskConfig(requiredProperties)//, propertiesFile = new File("./whisk.properties"))
 
-    SharedModules.initSharedModules(List(new SharedModule(actorSystem, whiskConfig, logger)))
+    SharedModules.initSharedModules(List(new SharedModule(actorSystem, whiskConfig, logger, null, null)))
 
     val entityStore = WhiskEntityStore.datastore(whiskConfig)
+
+    SharedModules.initSharedModules(List(new SharedModule(actorSystem, whiskConfig, logger, instance, entityStore)))
+
     println("entityStore:" + entityStore)
     implicit val transactionId = transid()
     implicit val ec = actorSystem.dispatcher
@@ -76,6 +80,10 @@ object SpiTest extends TransactionCounter {
     println(s"producer3: ${producer3}")
     println(s"producer4: ${producer4}")
 
+    ExecManifest.initialize(whiskConfig)
+    val lb = LoadBalancerProvider(actorSystem).getLoadBalancer(whiskConfig, instance, entityStore)
+
+    println(s"lb: ${lb}")
 
   }
 

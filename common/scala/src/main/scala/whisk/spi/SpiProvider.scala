@@ -32,6 +32,9 @@ import scaldi.Module
 import scaldi.MutableInjector
 import whisk.common.Logging
 import whisk.core.WhiskConfig
+import whisk.core.database.ArtifactStore
+import whisk.core.entity.InstanceId
+import whisk.core.entity.WhiskEntity
 
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
@@ -142,10 +145,12 @@ object SharedModules {
   * @param config
   * @param logging
   */
-class SharedModule(actorSystem:ActorSystem, config:WhiskConfig, logging:Logging) extends Module {
+class SharedModule(actorSystem:ActorSystem, config:WhiskConfig, logging:Logging, instance:InstanceId, store:ArtifactStore[WhiskEntity]) extends Module {
   bind [ActorSystem] to actorSystem
   bind [WhiskConfig] to config
   bind [Logging] to logging
+  bind [InstanceId] to instance
+  bind [ArtifactStore[WhiskEntity]] to store
 }
 
 private class ModuleLoaderImpl(actorSystem:ActorSystem) extends Extension{

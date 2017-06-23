@@ -23,9 +23,9 @@ import akka.actor.Actor
 import akka.actor.ActorContext
 import akka.actor.ActorSystem
 import akka.japi.Creator
+import spray.http.StatusCodes
 import spray.http.StatusCodes._
 import spray.http.Uri
-import spray.httpx.SprayJsonSupport._
 import spray.json.DefaultJsonProtocol._
 import spray.json._
 import spray.routing.Directive.pimpApply
@@ -40,13 +40,14 @@ import whisk.core.entitlement.EntitlementProvider
 import whisk.core.entity._
 import whisk.core.entity.ActivationId.ActivationIdGenerator
 import whisk.core.entity.ExecManifest.Runtimes
+import whisk.core.loadBalancer.LoadBalancerProvider
 import whisk.core.loadBalancer.LoadBalancerService
 import whisk.http.BasicHttpService
 import whisk.http.BasicRasService
 import whisk.spi.SharedModule
 import whisk.spi.SharedModules
 
-import scala.util.{ Failure, Success }
+import scala.util.{Failure, Success}
 
 
 /**
@@ -98,7 +99,7 @@ class Controller(
         handleRejections(customRejectionHandler) {
             super.routes ~ {
                 (pathEndOrSingleSlash & get) {
-                    complete(OK, info)
+                    complete(OK)//, info)
                 }
             } ~ {
                 apiv1.routes
@@ -120,7 +121,9 @@ class Controller(
     private implicit val activationStore = WhiskActivationStore.datastore(whiskConfig)
 
     // initialize backend services
-    private implicit val loadBalancer = new LoadBalancerService(whiskConfig, instance, entityStore)
+    SharedModules.initSharedModules(List(new SharedModule(actorSystem, whiskConfig, logging, instance, entityStore)))
+
+    private implicit val loadBalancer = LoadBalancerProvider(actorSystem).getLoadBalancer(whiskConfig, instance, entityStore)
     private implicit val consulServer = whiskConfig.consulServer
     private implicit val entitlementProvider = new LocalEntitlementProvider(whiskConfig, loadBalancer)
     private implicit val activationIdFactory = new ActivationIdGenerator {}
@@ -130,6 +133,7 @@ class Controller(
 
     /** The REST APIs. */
     implicit val controllerInstance = instance
+    loadBalancer
     private val apiv1 = new RestAPIVersion("api", "v1")
     private val swagger = new SwaggerDocs(Uri.Path.Empty, "infoswagger.json")
 
@@ -141,7 +145,9 @@ class Controller(
     private val internalInvokerHealth = {
         (path("invokers") & get) {
             complete {
-                loadBalancer.invokerHealth.map(_.mapValues(_.asString).toJson.asJsObject)
+                //TODO: is this used anywhere?
+                StatusCodes.NotFound
+                //loadBalancer.invokerHealth.map(_.mapValues(_.asString).toJson.asJsObject)
             }
         }
     }
@@ -193,7 +199,7 @@ object Controller {
         val config = new WhiskConfig(requiredProperties, optionalProperties)
 
         // setup shared injectables
-        SharedModules.initSharedModules(List(new SharedModule(actorSystem, config, logger)))
+        SharedModules.initSharedModules(List(new SharedModule(actorSystem, config, logger, null, null)))
 
         // if deploying multiple instances (scale out), must pass the instance number as the
         require(args.length >= 1, "controller instance required")
