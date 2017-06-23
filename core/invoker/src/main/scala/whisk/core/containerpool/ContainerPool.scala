@@ -17,19 +17,16 @@
 
 package whisk.core.containerpool
 
-import scala.collection.mutable
+import java.util.UUID
 
-import akka.actor.Actor
-import akka.actor.ActorRef
-import akka.actor.ActorRefFactory
-import akka.actor.Props
+import akka.actor.{Actor, ActorRef, ActorRefFactory, Props}
 import whisk.common.AkkaLogging
 import whisk.core.dispatcher.ActivationFeed.ContainerReleased
-import whisk.core.entity.ByteSize
-import whisk.core.entity.CodeExec
-import whisk.core.entity.EntityName
-import whisk.core.entity.ExecutableWhiskAction
+import whisk.core.entity.{ByteSize, CodeExec, EntityName, ExecutableWhiskAction}
 import whisk.core.entity.size._
+import whisk.core.mesos.{MesosClientActor, MesosTask, Subscribe}
+
+import scala.collection.mutable
 
 sealed trait WorkerState
 case object Busy extends WorkerState
@@ -69,6 +66,20 @@ class ContainerPool(
     val freePool = mutable.Map[ActorRef, ContainerData]()
     val busyPool = mutable.Map[ActorRef, ContainerData]()
     val prewarmedPool = mutable.Map[ActorRef, ContainerData]()
+
+    //init mesos framework:
+    val mesosClientActor = context.system.actorOf(MesosClientActor.props(
+        "whisk-invoker-"+UUID.randomUUID(),
+        "whisk-framework",
+        "http://localhost:5050",
+        "*",
+        taskBuilder = MesosTask.buildTask
+    ))
+
+    mesosClientActor ! Subscribe
+    //TODO: verify subscribed status
+
+
 
     prewarmConfig.foreach { config =>
         logging.info(this, s"pre-warming ${config.count} ${config.exec.kind} containers")

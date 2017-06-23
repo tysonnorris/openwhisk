@@ -102,7 +102,7 @@ class DockerClient(dockerHost: Option[String] = None)(executionContext: Executio
 case class ContainerId(val asString: String) {
     require(asString.nonEmpty, "ContainerId must not be empty")
 }
-case class ContainerIp(val asString: String) {
+case class ContainerIp(val asString: String, val port:Int = 8080) {
     require(asString.nonEmpty, "ContainerIp must not be empty")
 }
 

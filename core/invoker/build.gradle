@@ -13,6 +13,13 @@ repositories {
 dependencies {
     compile "org.scala-lang:scala-library:${gradle.scala.version}"
     compile project(':common:scala')
+
+    //for mesos
+    compile "org.apache.mesos:mesos:1.0.0"
+    //for recordIO
+    compile "com.lightbend.akka:akka-stream-alpakka-simple-codecs_2.11:0.9"
+    //for JSON printing of protobuf
+    compile "com.google.protobuf:protobuf-java-util:3.3.1"
 }
 
 tasks.withType(ScalaCompile) {
