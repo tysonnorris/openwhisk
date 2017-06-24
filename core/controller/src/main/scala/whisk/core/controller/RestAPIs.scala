@@ -40,7 +40,6 @@ import whisk.core.entity._
 import whisk.core.entity.ActivationId.ActivationIdGenerator
 import whisk.core.entity.types._
 import whisk.core.loadBalancer.LoadBalancer
-import whisk.core.loadBalancer.LoadBalancerService
 
 /**
  * Abstract class which provides basic Directives which are used to construct route structures

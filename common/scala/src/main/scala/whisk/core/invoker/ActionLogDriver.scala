@@ -19,16 +19,19 @@ package whisk.core.invoker
 
 import java.nio.charset.StandardCharsets
 
-import scala.Vector
-import scala.util.{ Failure, Success, Try }
-
-import spray.json._
 import spray.json.DefaultJsonProtocol
-import whisk.common.{ Logging, TransactionId }
+import spray.json._
+import whisk.common.Logging
+import whisk.common.TransactionId
 import whisk.core.entity._
-import whisk.core.entity.size.{ SizeInt, SizeString }
-import scala.collection.mutable.Buffer
+import whisk.core.entity.size.SizeInt
+import whisk.core.entity.size.SizeString
 import whisk.http.Messages
+
+import scala.collection.mutable.Buffer
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
 
 /**
  * Represents a single log line as read from a docker log

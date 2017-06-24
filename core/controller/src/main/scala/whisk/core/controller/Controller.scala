@@ -133,7 +133,6 @@ class Controller(
 
     /** The REST APIs. */
     implicit val controllerInstance = instance
-    loadBalancer
     private val apiv1 = new RestAPIVersion("api", "v1")
     private val swagger = new SwaggerDocs(Uri.Path.Empty, "infoswagger.json")
 

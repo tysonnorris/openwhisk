@@ -51,7 +51,6 @@ import whisk.core.entity.InstanceId
 import whisk.core.entity.WhiskAction
 import whisk.core.entity.types.EntityStore
 import whisk.spi.SpiFactoryModule
-import whisk.spi.SpiModule
 
 import scala.annotation.tailrec
 

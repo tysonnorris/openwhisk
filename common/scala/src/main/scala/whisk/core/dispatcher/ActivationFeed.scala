@@ -17,16 +17,15 @@
 
 package whisk.core.dispatcher
 
-import scala.concurrent.duration.FiniteDuration
-import scala.util.Try
-
-import org.apache.kafka.clients.consumer.CommitFailedException
-
 import akka.actor.Actor
 import akka.actor.actorRef2Scala
+import org.apache.kafka.clients.consumer.CommitFailedException
 import whisk.common.Logging
 import whisk.common.TransactionId
 import whisk.core.connector.MessageConsumer
+
+import scala.concurrent.duration.FiniteDuration
+import scala.util.Try
 
 object ActivationFeed {
     sealed class ActivationNotification
