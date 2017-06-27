@@ -1,5 +1,5 @@
 minimesos {
-    clusterName = "Change Cluster Name in minimesosFile file"
+    clusterName = "openwhisk mesos cluster"
     loggingLevel = "INFO"
     mapAgentSandboxVolume = false
     mapPortsToHost = false
@@ -9,7 +9,7 @@ minimesos {
     agent {
         imageName = "containersol/mesos-agent"
         imageTag = "1.0.0-0.1.0"
-        loggingLevel = "# INHERIT FROM CLUSTER"
+        loggingLevel = "INFO"
         portNumber = 5051
 
         resources {

@@ -43,7 +43,7 @@ case object TeardownComplete
 case class TaskRecoveryDetail(taskId:String, agentId:String)
 //data
 case class TaskReqs(taskId:String, dockerImage:String, cpus:Double, mem:Int, port:Int)
-case class TaskDetails(taskInfo:TaskInfo, taskStatus:TaskStatus)
+case class TaskDetails(taskInfo:TaskInfo, taskStatus:TaskStatus = null, hostname:String = null)
 
 //TODO: mesos authentication
 class MesosClientActor (val id:String, val frameworkName:String, val master:String, val role:String, val taskMatcher:(String, Iterable[TaskReqs], Iterable[Offer], (TaskReqs,Offer) => TaskInfo) => Map[OfferID,Seq[TaskInfo]], val taskBuilder:(TaskReqs,Offer) => TaskInfo)
@@ -62,6 +62,7 @@ class MesosClientActor (val id:String, val frameworkName:String, val master:Stri
   private var pendingTaskPromises:Map[String,Promise[TaskDetails]] = Map()
   private var deleteTaskPromises:Map[String, Promise[TaskDetails]] = Map()
   private var taskStatuses:Map[String, TaskDetails] = Map()
+  private var agentHostnames:Map[String,String] = Map()
 
   //TODO: FSM for handling subscribing, subscribed, failed, etc states
   override def receive: Receive = {
@@ -105,7 +106,8 @@ class MesosClientActor (val id:String, val frameworkName:String, val master:Stri
     log.info(s"received update for ${event.getStatus.getTaskId} in state ${event.getStatus.getState}")
 
     val oldTaskDetails = taskStatuses(event.getStatus.getTaskId.getValue)
-    val newTaskDetails = TaskDetails(oldTaskDetails.taskInfo, event.getStatus)
+    val newTaskDetailsAgentId = event.getStatus.getAgentId.getValue
+    val newTaskDetails = TaskDetails(oldTaskDetails.taskInfo, event.getStatus, agentHostnames.getOrElse(newTaskDetailsAgentId, s"unknown-agent-${newTaskDetailsAgentId}"))
     taskStatuses += (event.getStatus.getTaskId.getValue -> newTaskDetails)
     pendingTaskPromises.get(event.getStatus.getTaskId.getValue) match {
       case Some(promise) => {
@@ -181,6 +183,15 @@ class MesosClientActor (val id:String, val frameworkName:String, val master:Stri
 
     log.info(s"received ${event.getOffersList.size} offers: ${toCompactJsonString(event);}")
 
+    //update hostnames if needed
+    event.getOffersList.asScala.foreach (offer => {
+      val agentID = offer.getAgentId.getValue
+      val agentHostname = offer.getHostname
+      if (agentHostnames.getOrElse(agentID, "") != agentHostname){
+        log.info(s"noticed a new agent (or new hostname for existing agent) ${agentID} ${agentHostname}")
+        agentHostnames += (agentID -> agentHostname)
+      }
+    })
 
     val matchedTasks = taskMatcher(
       role,
@@ -227,7 +238,7 @@ class MesosClientActor (val id:String, val frameworkName:String, val master:Stri
 
       matchedTasks.values.flatten.map(task => {
         pendingTaskInfo -= task.getTaskId.getValue
-        taskStatuses += (task.getTaskId.getValue -> TaskDetails(task, null))
+        taskStatuses += (task.getTaskId.getValue -> TaskDetails(task))
       })
 
     }

@@ -452,7 +452,7 @@ object Invoker {
         }
 
         // setup shared injectables
-        SharedModules.initSharedModules(List(new SharedModule(actorSystem, config, logger, null, null)))
+        SharedModules.initSharedModules(List(new SharedModule(actorSystem, config, logger, null, null, null)))
 
         val topic = s"invoker${invokerInstance.toInt}"
         val groupid = "invokers"

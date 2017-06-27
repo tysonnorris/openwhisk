@@ -35,6 +35,7 @@ import whisk.common.Logging
 import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
 import whisk.core.WhiskConfig
+import whisk.core.container.ContainerPool
 import whisk.core.entitlement._
 import whisk.core.entitlement.EntitlementProvider
 import whisk.core.entity._
@@ -121,7 +122,7 @@ class Controller(
     private implicit val activationStore = WhiskActivationStore.datastore(whiskConfig)
 
     // initialize backend services
-    SharedModules.initSharedModules(List(new SharedModule(actorSystem, whiskConfig, logging, instance, entityStore)))
+    SharedModules.initSharedModules(List(new SharedModule(actorSystem, whiskConfig, logging, instance, entityStore, activationStore)))
 
     private implicit val loadBalancer = LoadBalancerProvider(actorSystem).getLoadBalancer(whiskConfig, instance, entityStore)
     private implicit val consulServer = whiskConfig.consulServer
@@ -166,6 +167,7 @@ object Controller {
     def requiredProperties = Map(WhiskConfig.servicePort -> 8080.toString) ++
         Map(WhiskConfig.controllerInstances -> 1.toString) ++
         ExecManifest.requiredProperties ++
+        ContainerPool.requiredProperties ++
         RestApiCommons.requiredProperties ++
         LoadBalancerService.requiredProperties ++
         EntitlementProvider.requiredProperties
@@ -198,7 +200,7 @@ object Controller {
         val config = new WhiskConfig(requiredProperties, optionalProperties)
 
         // setup shared injectables
-        SharedModules.initSharedModules(List(new SharedModule(actorSystem, config, logger, null, null)))
+        SharedModules.initSharedModules(List(new SharedModule(actorSystem, config, logger, null, null, null)))
 
         // if deploying multiple instances (scale out), must pass the instance number as the
         require(args.length >= 1, "controller instance required")

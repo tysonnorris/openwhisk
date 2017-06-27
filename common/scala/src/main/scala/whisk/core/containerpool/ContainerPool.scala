@@ -92,10 +92,13 @@ class ContainerPool(
         // A job to run on a container
         case r: Run =>
             val container = if (busyPool.size < maxActiveContainers) {
+                logging.info(this, "room in pool, will schedule")
                 // Schedule a job to a warm container
                 ContainerPool.schedule(r.action, r.msg.user.namespace, freePool.toMap).orElse {
                     if (busyPool.size + freePool.size < maxPoolSize) {
+                        logging.info(this, "will try to use a prewarm...")
                         takePrewarmContainer(r.action).orElse {
+                            logging.info(this, "will create new container...")
                             Some(createContainer())
                         }
                     } else None

@@ -17,14 +17,20 @@
 
 package whisk.core.invoker
 
-import java.util.UUID
+import scala.concurrent.Await
+import scala.concurrent.Future
+import scala.concurrent.duration._
+import scala.util.Failure
+import scala.util.Success
 
-import akka.actor.{ActorRef, ActorRefFactory, ActorSystem}
-import akka.pattern.ask
-import akka.util.Timeout
-import spray.json.DefaultJsonProtocol._
+import akka.actor.ActorRef
+import akka.actor.ActorRefFactory
+import akka.actor.ActorSystem
 import spray.json._
-import whisk.common.{Logging, LoggingMarkers, TransactionId}
+import spray.json.DefaultJsonProtocol._
+import whisk.common.Logging
+import whisk.common.LoggingMarkers
+import whisk.common.TransactionId
 import whisk.core.WhiskConfig
 import whisk.core.connector.ActivationMessage
 import whisk.core.connector.CompletionMessage
@@ -36,19 +42,15 @@ import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.PrewarmingConfig
 import whisk.core.containerpool.Run
 import whisk.core.containerpool.docker.DockerClientWithFileAccess
+import whisk.core.containerpool.docker.DockerContainer
 import whisk.core.containerpool.docker.RuncClient
 import whisk.core.database.NoDocumentException
 import whisk.core.dispatcher.ActivationFeed.FailedActivation
 import whisk.core.dispatcher.MessageHandler
-import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity._
+import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.size._
-import whisk.core.mesos.{MesosClientActor, MesosTask, Subscribe, SubscribeComplete, Teardown}
 import whisk.http.Messages
-
-import scala.concurrent.duration._
-import scala.concurrent.{Await, Future}
-import scala.util.{Failure, Success}
 
 class InvokerReactive(
     config: WhiskConfig,
@@ -65,45 +67,23 @@ class InvokerReactive(
     implicit val docker = new DockerClientWithFileAccess()(ec)
     implicit val runc = new RuncClient(ec)
 
-    implicit val mesosClientActor = actorSystem.actorOf(MesosClientActor.props(
-        "whisk-invoker-"+UUID.randomUUID(),
-        "whisk-framework",
-        "http://10.0.2.2:5050",
-        "*",
-        taskBuilder = MesosTask.buildTask
-    ))
-
-    //must start the subscribe workflow
-    val subscribeTimeout = Timeout(10.seconds)
-    val teardownTimeout = Timeout(10.seconds)
-    mesosClientActor.ask(Subscribe)(subscribeTimeout).mapTo[SubscribeComplete].map(complete => {
-        logging.info(this, "subscribe completed successfully...")
-    }) recover {
-        case t =>
-            logging.error(this, s"subscription to mesos failed...${t.getMessage}")
-            //TODO: retry?
-    }
-
     /** Cleans up all running wsk_ containers */
     def cleanup() = {
-//        val cleaning = docker.ps(Seq("name" -> "wsk_"))(TransactionId.invokerNanny).flatMap { containers =>
-//            val removals = containers.map { id =>
-//                runc.resume(id)(TransactionId.invokerNanny).recoverWith {
-//                    // Ignore resume failures and try to remove anyway
-//                    case _ => Future.successful(())
-//                }.flatMap {
-//                    _ => docker.rm(id)(TransactionId.invokerNanny)
-//                }
-//            }
-//            Future.sequence(removals)
-//        }
-//
-//        Await.ready(cleaning, 30.seconds)
-        val complete:Future[Any] = mesosClientActor.ask(Teardown)(teardownTimeout)
-        val result = Await.result(complete, 30.seconds)
-        logging.info(this, "teardown completed!")
+        val cleaning = docker.ps(Seq("name" -> "wsk_"))(TransactionId.invokerNanny).flatMap { containers =>
+            val removals = containers.map { id =>
+                runc.resume(id)(TransactionId.invokerNanny).recoverWith {
+                    // Ignore resume failures and try to remove anyway
+                    case _ => Future.successful(())
+                }.flatMap {
+                    _ => docker.rm(id)(TransactionId.invokerNanny)
+                }
+            }
+            Future.sequence(removals)
+        }
+
+        Await.ready(cleaning, 30.seconds)
     }
-//    cleanup()
+    cleanup()
     sys.addShutdownHook(cleanup())
 
     /** Factory used by the ContainerProxy to physically create a new container. */
@@ -114,19 +94,7 @@ class InvokerReactive(
             actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
         }
 
-//        DockerContainer.create(
-//            tid,
-//            image = image,
-//            userProvidedImage = userProvidedImage,
-//            memory = memory,
-//            cpuShares = OldContainerPool.cpuShare(config),
-//            environment = Map("__OW_API_HOST" -> config.wskApiHost),
-//            network = config.invokerContainerNetwork,
-//            dnsServers = config.invokerContainerDns,
-//            name = Some(name))
-
-        logging.info(this, "using Mesos to create a container...")
-        MesosTask.create(
+        DockerContainer.create(
             tid,
             image = image,
             userProvidedImage = userProvidedImage,

@@ -116,7 +116,7 @@ class ContainerProxy(
                 job.memoryLimit)
                 .map(container => PreWarmedData(container, job.exec.kind, job.memoryLimit))
                 .pipeTo(self)
-
+            logging.info(this, "uninit - created new container, about to start...")
             goto(Starting)
 
         // cold start (no container to reuse or available stem cell container)
@@ -130,6 +130,8 @@ class ContainerProxy(
                 job.action.exec.image,
                 job.action.exec.pull,
                 job.action.limits.memory.megabytes.MB)
+
+            logging.info(this, "created new container, about to init...")
 
             // container factory will either yield a new container ready to execute the action, or
             // starting up the container failed; for the latter, it's either an internal error starting
@@ -327,7 +329,9 @@ class ContainerProxy(
         // Only initialize iff we haven't yet warmed the container
         val initialize = stateData match {
             case data: WarmedData => Future.successful(Interval.zero)
-            case _                => container.initialize(job.action.containerInitializer, actionTimeout)
+            case _                =>
+                logging.info(this, "about to initialize a running container...")
+                container.initialize(job.action.containerInitializer, actionTimeout)
         }
 
         val activation: Future[WhiskActivation] = initialize.flatMap { initInterval =>

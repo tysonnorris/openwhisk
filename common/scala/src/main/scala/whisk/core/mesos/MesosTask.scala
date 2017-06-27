@@ -1,30 +1,48 @@
 package whisk.core.mesos
 import java.time.Instant
 
-import akka.actor.{ActorRef, ActorRefFactory, ActorSystem}
+import akka.actor.ActorRef
+import akka.actor.ActorRefFactory
+import akka.actor.ActorSystem
 import akka.pattern.ask
 import akka.util.Timeout
 import org.apache.mesos.v1.Protos
 import org.apache.mesos.v1.Protos.ContainerInfo.DockerInfo
 import org.apache.mesos.v1.Protos.ContainerInfo.DockerInfo.PortMapping
 import org.apache.mesos.v1.Protos.Value.Ranges
-import org.apache.mesos.v1.Protos.{CommandInfo, ContainerInfo, Offer, Resource, TaskID, TaskInfo, TaskStatus, Value}
+import org.apache.mesos.v1.Protos.CommandInfo
+import org.apache.mesos.v1.Protos.ContainerInfo
+import org.apache.mesos.v1.Protos.Offer
+import org.apache.mesos.v1.Protos.Resource
+import org.apache.mesos.v1.Protos.TaskID
+import org.apache.mesos.v1.Protos.TaskInfo
+import org.apache.mesos.v1.Protos.TaskStatus
+import org.apache.mesos.v1.Protos.Value
 import spray.json.DefaultJsonProtocol._
 import spray.json._
-import whisk.common.{Logging, LoggingMarkers, TransactionId}
-import whisk.core.container.{HttpUtils, Interval, RunResult}
-import whisk.core.containerpool.docker.{ContainerId, ContainerIp, RuncApi}
-import whisk.core.containerpool.{Container, InitializationError}
+import whisk.common.Logging
+import whisk.common.LoggingMarkers
+import whisk.common.TransactionId
+import whisk.core.container.HttpUtils
+import whisk.core.container.Interval
+import whisk.core.container.RunResult
+import whisk.core.containerpool.Container
+import whisk.core.containerpool.InitializationError
+import whisk.core.containerpool.docker.ContainerId
+import whisk.core.containerpool.docker.ContainerIp
 import whisk.core.entity.size._
-import whisk.core.entity.{ActivationResponse, ByteSize}
+import whisk.core.entity.ActivationResponse
+import whisk.core.entity.ByteSize
 import whisk.core.invoker.ActionLogDriver
 import whisk.http.Messages
 
 import scala.collection.JavaConverters._
 import scala.concurrent.duration._
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 import scala.language.postfixOps
-import scala.util.{Failure, Success}
+import scala.util.Failure
+import scala.util.Success
 
 /**
   * Created by tnorris on 5/22/17.
@@ -49,7 +67,7 @@ object MesosTask {
              network: String = "bridge",
              dnsServers: Seq[String] = Seq(),
              name: Option[String] = None)(
-              implicit mesosClientActor: ActorRef, runc: RuncApi, ec: ExecutionContext, log: Logging, af:ActorRefFactory): Future[MesosTask] = {
+              implicit mesosClientActor: ActorRef, ec: ExecutionContext, log: Logging, af:ActorRefFactory): Future[MesosTask] = {
     implicit val tid = transid
     //TODO: freeze payload form in case classes?
     val createPayload = CreateContainer("whisk/nodejs6action:latest", "256m", "256")
@@ -70,7 +88,7 @@ object MesosTask {
 
     launched.map (taskDetails => {
       log.info(this, s"launched task with state ${taskDetails.taskStatus.getState}")
-      val taskHost = "10.0.2.2"//taskDetails.taskStatus.getContainerStatus.getNetworkInfos(0).getIpAddresses(0)
+      val taskHost = taskDetails.hostname//taskDetails.taskStatus.getContainerStatus.getNetworkInfos(0).getIpAddresses(0).getIpAddress
       val taskPort = taskDetails.taskInfo.getResourcesList.asScala.filter(_.getName == "ports").iterator.next().getRanges.getRange(0).getBegin.toInt
       log.info(this, s"ip was ${taskHost} port was ${taskPort}")
       val containerIp = new ContainerIp(taskHost,taskPort)

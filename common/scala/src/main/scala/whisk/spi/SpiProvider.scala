@@ -34,6 +34,7 @@ import whisk.common.Logging
 import whisk.core.WhiskConfig
 import whisk.core.database.ArtifactStore
 import whisk.core.entity.InstanceId
+import whisk.core.entity.WhiskActivation
 import whisk.core.entity.WhiskEntity
 
 import scala.collection.JavaConverters._
@@ -145,12 +146,13 @@ object SharedModules {
   * @param config
   * @param logging
   */
-class SharedModule(actorSystem:ActorSystem, config:WhiskConfig, logging:Logging, instance:InstanceId, store:ArtifactStore[WhiskEntity]) extends Module {
+class SharedModule(actorSystem:ActorSystem, config:WhiskConfig, logging:Logging, instance:InstanceId, store:ArtifactStore[WhiskEntity], activationStore:ArtifactStore[WhiskActivation]) extends Module {
   bind [ActorSystem] to actorSystem
   bind [WhiskConfig] to config
   bind [Logging] to logging
   bind [InstanceId] to instance
   bind [ArtifactStore[WhiskEntity]] to store
+  bind [ArtifactStore[WhiskActivation]] to activationStore
 }
 
 private class ModuleLoaderImpl(actorSystem:ActorSystem) extends Extension{
