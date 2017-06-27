@@ -23,11 +23,10 @@ import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.Success
 import scala.util.Failure
-
 import akka.actor.FSM
 import akka.actor.Props
 import akka.actor.Stash
-import akka.actor.Status.{ Failure => FailureMessage }
+import akka.actor.Status.{Failure => FailureMessage}
 import akka.pattern.pipe
 import spray.json._
 import spray.json.DefaultJsonProtocol._
@@ -201,6 +200,7 @@ class ContainerProxy(
 
         // Run was successful
         case Event(data: WarmedData, _) =>
+            logging.info(this, s"run completed...")
             context.parent ! NeedWork(data)
             goto(Ready) using data
 
@@ -346,6 +346,7 @@ class ContainerProxy(
                 // but potentially under-estimates actual deadline
                 "deadline" -> (Instant.now.toEpochMilli + actionTimeout.toMillis).toString.toJson)
 
+            logging.info(this, s"about to run msg ${job.msg.activationId}")
             container.run(parameters, environment, actionTimeout)(job.msg.transid).map {
                 case (runInterval, response) =>
                     val initRunInterval = Interval(runInterval.start.minusMillis(initInterval.duration.toMillis), runInterval.end)

@@ -91,10 +91,36 @@ class ContainerPool(
     def receive: Receive = {
         // A job to run on a container
         case r: Run =>
+            runNow(r)
+
+        // Container is free to take more work
+        case NeedWork(data: WarmedData) =>
+            logging.info(this, "need work with warmedData...")
+            freePool.update(sender(), data)
+            busyPool.remove(sender())
+
+        // Container is prewarmed and ready to take work
+        case NeedWork(data: PreWarmedData) =>
+            prewarmedPool.update(sender(), data)
+
+        // Container got removed
+        case ContainerRemoved =>
+            freePool.remove(sender())
+            busyPool.remove(sender())
+
+        // Activation completed
+        case ActivationCompleted =>
+            feed ! ContainerReleased
+    }
+
+    def runNow(r:Run): Unit ={
             val container = if (busyPool.size < maxActiveContainers) {
-                logging.info(this, "room in pool, will schedule")
+                logging.info(this, s"room in pool ${freePool.size}, will schedule")
                 // Schedule a job to a warm container
+
+
                 ContainerPool.schedule(r.action, r.msg.user.namespace, freePool.toMap).orElse {
+                    logging.info(this, "did not schedule, will try for prewarm or create...")
                     if (busyPool.size + freePool.size < maxPoolSize) {
                         logging.info(this, "will try to use a prewarm...")
                         takePrewarmContainer(r.action).orElse {
@@ -116,29 +142,13 @@ class ContainerPool(
             container match {
                 case Some((actor, data)) =>
                     busyPool.update(actor, data)
-                    freePool.remove(actor)
+                    //freePool.remove(actor)
+                    logging.info(this, s"submitting msg ${r.msg.activationId} to actor ${actor}")
                     actor ! r // forwards the run request to the container
                 case None =>
                     self ! r
             }
 
-        // Container is free to take more work
-        case NeedWork(data: WarmedData) =>
-            freePool.update(sender(), data)
-            busyPool.remove(sender())
-
-        // Container is prewarmed and ready to take work
-        case NeedWork(data: PreWarmedData) =>
-            prewarmedPool.update(sender(), data)
-
-        // Container got removed
-        case ContainerRemoved =>
-            freePool.remove(sender())
-            busyPool.remove(sender())
-
-        // Activation completed
-        case ActivationCompleted =>
-            feed ! ContainerReleased
     }
 
     /** Creates a new container and updates state accordingly. */

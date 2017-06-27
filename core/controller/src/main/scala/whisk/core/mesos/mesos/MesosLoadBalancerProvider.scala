@@ -3,7 +3,6 @@ package whisk.core.mesos.mesos
 import java.util.UUID
 
 import akka.actor.Actor
-import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
 import akka.actor.Props
 import scaldi.Injector
@@ -12,11 +11,10 @@ import whisk.common.TransactionId
 import whisk.core.WhiskConfig
 import whisk.core.connector.ActivationMessage
 import whisk.core.container.{ContainerPool => OldContainerPool}
-import whisk.core.containerpool.ActivationTracker
-import whisk.core.containerpool.ContainerPool
-import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.PrewarmingConfig
 import whisk.core.containerpool.Run
+import whisk.core.containerpool.SynchronousContainer
+import whisk.core.containerpool.SynchronousContainerPool
 import whisk.core.entity.ByteSize
 import whisk.core.entity.CodeExecAsString
 import whisk.core.entity.ExecManifest
@@ -34,6 +32,7 @@ import whisk.core.mesos.MesosTask
 import whisk.core.mesos.Subscribe
 import whisk.spi.SpiFactoryModule
 
+import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
 import scala.util.Failure
@@ -55,7 +54,7 @@ class MesosLoadBalancerProvider(config:WhiskConfig, instance: InstanceId, entity
   }
 }
 
-class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(implicit val logging:Logging,val actorSystem:ActorSystem) extends LoadBalancer with ActivationTracker {
+class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(implicit val logging:Logging,val actorSystem:ActorSystem) extends LoadBalancer {
   //init mesos framework:
   implicit val mesosClientActor = actorSystem.actorOf(MesosClientActor.props(
     "whisk-loadbalancer-"+UUID.randomUUID(),
@@ -66,6 +65,8 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
   ))
 
   mesosClientActor ! Subscribe
+
+  implicit val ec:ExecutionContext = actorSystem.dispatcher
 
   //TODO: verify subscribed status
   /** Factory used by the ContainerProxy to physically create a new container. */
@@ -98,8 +99,11 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
   /** Sends an active-ack. */
 
   def ack (tid: TransactionId, activation: WhiskActivation, controllerInstance: InstanceId):Future[Unit] = {
-    Future{
-      processCompletion(tid, activation.activationId, activation)
+//    Future{
+//      processCompletion(tid, activation.activationId, activation)
+//    }
+    Future {
+      Unit
     }
   }
   /** Stores an activation in the database. */
@@ -113,22 +117,32 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
   }
 
   /** Creates a ContainerProxy Actor when being called. */
-  val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(containerFactory, ack, store))
+  val childFactory = () => new SynchronousContainer(containerFactory, store)// f.actorOf(ContainerProxy.props(containerFactory, ack, store))
 
   val prewarmKind = "nodejs:6"
   val prewarmExec = ExecManifest.runtimesManifest.resolveDefaultRuntime(prewarmKind).map { manifest =>
     new CodeExecAsString(manifest, "", None)
   }.get
 
-  val pool = actorSystem.actorOf(ContainerPool.props(
-    childFactory,
+//  val pool = actorSystem.actorOf(ContainerPool.props(
+//    childFactory,
+//    OldContainerPool.getDefaultMaxActive(config),
+//    OldContainerPool.getDefaultMaxActive(config),
+//    //activationFeed,
+//    actorSystem.actorOf(Props(new Actor {
+//      override def receive: Receive = Actor.emptyBehavior
+//    })),
+//    Some(PrewarmingConfig(2, prewarmExec, 256.MB))))
+
+  val pool = new SynchronousContainerPool(childFactory,
     OldContainerPool.getDefaultMaxActive(config),
     OldContainerPool.getDefaultMaxActive(config),
     //activationFeed,
     actorSystem.actorOf(Props(new Actor {
       override def receive: Receive = Actor.emptyBehavior
     })),
-    Some(PrewarmingConfig(2, prewarmExec, 256.MB))))
+    Some(PrewarmingConfig(2, prewarmExec, 256.MB)))
+
 //  val pool = new ContainerPool(childFactory, OldContainerPool.getDefaultMaxActive(config), OldContainerPool.getDefaultMaxActive(config), activationFeed, Some(PrewarmingConfig(2, prewarmExec, 256.MB)))
 
   /**
@@ -183,17 +197,20 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
       case Some(executable) =>
         val subject = msg.user.subject.asString
         //this entry contains the promise that needs to be completed once the run is finished
-        val entry = setupActivation(msg.activationId, subject, "mesos", timeout, transid)
+        //val entry = setupActivation(msg.activationId, subject, "mesos", timeout, transid)
         //val result = sendActivationToInvoker(messageProducer, msg, invokerName)
-        pool ! Run(executable, msg)
+        //pool ! Run(executable, msg)
+        Future {
+          pool.runNow(Run(executable, msg))
+        }
 //        val result1 = result  .map { _ =>
 //          entry.promise.future
 //        }
 //        result1
 
-        Future {
-          entry.promise.future
-        }
+//        Future {
+//          entry.promise.future
+//        }
 
         //Future.successful(())
       case None =>
