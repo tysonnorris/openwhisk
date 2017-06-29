@@ -20,6 +20,7 @@ import org.apache.mesos.v1.Protos.TaskStatus
 import org.apache.mesos.v1.Protos.Value
 import spray.json.DefaultJsonProtocol._
 import spray.json._
+import whisk.common.Counter
 import whisk.common.Logging
 import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
@@ -53,6 +54,8 @@ case class CreateContainer (image: String, memory:String, cpuShare:String)
 object MesosTask {
   val taskLaunchTimeout = Timeout(15 seconds)
   val taskDeleteTimeout = Timeout(10 seconds)
+  val counter = new Counter()
+  val startTime = Instant.now.getEpochSecond
   //implicit var ref:ActorRefFactory
   implicit val system = ActorSystem( "spray-api-service" )
   implicit val ec = system.dispatcher
@@ -79,7 +82,7 @@ object MesosTask {
 
 
 
-    val taskId = s"task-0-${Instant.now.getEpochSecond}"
+    val taskId = s"task-${counter.next()}-${startTime}"
 
     val task = TaskReqs(taskId, image, 0.1, 24, 8080)
 
@@ -105,10 +108,32 @@ object MesosTask {
     val container = JsObject("image" -> JsString("whisk/nodejs6action:latest"), "memory" -> JsString("128m"), "cpuShares" -> JsString("128"), "environment" -> env)
     JsObject("container" -> container)
   }
-  def buildTask(reqs:TaskReqs, offer:Offer):TaskInfo = {
+  def buildTask(reqs:TaskReqs, offer:Offer, portIndex:Int):TaskInfo = {
     val containerPort = reqs.port
-    val hostPort = offer.getResourcesList.asScala
-      .filter(res => res.getName == "ports").iterator.next().getRanges.getRange(0).getBegin.toInt
+    //getting the port from the ranges is hard...
+    var hostPort = 0
+    var portSeekIndex = 0
+    val ranges = offer.getResourcesList.asScala
+      .filter(res => res.getName == "ports").iterator.next().getRanges.getRangeList.asScala
+    val rangesIt = ranges.iterator
+    var rangeSeek = rangesIt.next()
+    var nextPort = rangeSeek.getBegin
+    while (portSeekIndex < portIndex ){
+      while (portSeekIndex < portIndex && nextPort < rangeSeek.getEnd){
+        portSeekIndex += 1
+        nextPort +=1
+      }
+      if (portSeekIndex != portIndex) {
+        rangeSeek = rangesIt.next()
+        nextPort = rangeSeek.getBegin
+      }
+    }
+    if (portSeekIndex != portIndex) {
+      throw new RuntimeException("not enough ports matched in offer")
+    } else {
+      hostPort = nextPort.toInt
+    }
+
     val agentHost = offer.getHostname
     val dockerImage = reqs.dockerImage
 

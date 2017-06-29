@@ -46,7 +46,7 @@ case class TaskReqs(taskId:String, dockerImage:String, cpus:Double, mem:Int, por
 case class TaskDetails(taskInfo:TaskInfo, taskStatus:TaskStatus = null, hostname:String = null)
 
 //TODO: mesos authentication
-class MesosClientActor (val id:String, val frameworkName:String, val master:String, val role:String, val taskMatcher:(String, Iterable[TaskReqs], Iterable[Offer], (TaskReqs,Offer) => TaskInfo) => Map[OfferID,Seq[TaskInfo]], val taskBuilder:(TaskReqs,Offer) => TaskInfo)
+class MesosClientActor (val id:String, val frameworkName:String, val master:String, val role:String, val taskMatcher:(String, Iterable[TaskReqs], Iterable[Offer], (TaskReqs,Offer, Int) => TaskInfo) => Map[OfferID,Seq[TaskInfo]], val taskBuilder:(TaskReqs,Offer, Int) => TaskInfo)
   extends Actor with ActorLogging {
   implicit val ec:ExecutionContext = context.dispatcher
   implicit val system:ActorSystem = context.system
@@ -198,6 +198,16 @@ class MesosClientActor (val id:String, val frameworkName:String, val master:Stri
       pendingTaskInfo.values,
       event.getOffersList.asScala.toList,
       taskBuilder)
+
+    log.info(s"matched ${matchedTasks.size} tasks; ${pendingTaskInfo.size} pending tasks remain")
+    pendingTaskInfo.values.foreach(reqs => {
+      log.info(s"pending task: ${reqs.taskId}")
+    })
+    matchedTasks.values.foreach(taskInfos => {
+      taskInfos.foreach(taskInfo => {
+        log.info(s"     matched task: ${taskInfo.getTaskId.getValue}")
+      })
+    })
 
 
     //if not tasks matched, we have to explicitly decline all offers
@@ -438,8 +448,8 @@ class MesosClientActor (val id:String, val frameworkName:String, val master:Stri
 }
 object MesosClientActor {
   def props(id:String, name:String, master:String, role:String,
-            taskMatcher: (String, Iterable[TaskReqs], Iterable[Offer], (TaskReqs, Offer) => TaskInfo) => Map[OfferID,Seq[TaskInfo]] = MesosClient.defaultTaskMatcher,
-            taskBuilder: (TaskReqs, Offer) => TaskInfo): Props =
+            taskMatcher: (String, Iterable[TaskReqs], Iterable[Offer], (TaskReqs, Offer, Int) => TaskInfo) => Map[OfferID,Seq[TaskInfo]] = MesosClient.defaultTaskMatcher,
+            taskBuilder: (TaskReqs, Offer, Int) => TaskInfo): Props =
     Props(new MesosClientActor(id, name, master, role, taskMatcher, taskBuilder))
 }
 
@@ -450,12 +460,13 @@ object MesosClient {
 
   //TODO: allow task persistence/reconcile
 
-  val defaultTaskMatcher: (String, Iterable[TaskReqs], Iterable[Offer], (TaskReqs, Offer) => TaskInfo) => Map[OfferID,Seq[TaskInfo]] =
-    (role:String, t: Iterable[TaskReqs], o: Iterable[Offer], builder:(TaskReqs, Offer) => TaskInfo) => {
+  val defaultTaskMatcher: (String, Iterable[TaskReqs], Iterable[Offer], (TaskReqs, Offer, Int) => TaskInfo) => Map[OfferID,Seq[TaskInfo]] =
+    (role:String, t: Iterable[TaskReqs], o: Iterable[Offer], builder:(TaskReqs, Offer, Int) => TaskInfo) => {
       //we can launch many tasks on a single offer
 
       var tasksInNeed:ListBuffer[TaskReqs] = t.to[ListBuffer]
       var result = Map[OfferID,Seq[TaskInfo]]()
+      var portIndex = 0
       o.map(offer => {
 
         //TODO: manage explicit and default roles, similar to https://github.com/mesos/kafka/pull/103/files
@@ -484,7 +495,8 @@ object MesosClient {
               remainingOfferCpus -= taskCpus
               remainingOfferMem -= taskMem
               //move the task from InNeed to Accepted
-              acceptedTasks += builder(task, offer)
+              acceptedTasks += builder(task, offer, portIndex)
+              portIndex += 1
               tasksInNeed -= task
             }
           })

@@ -2,10 +2,8 @@ package whisk.core.mesos.mesos
 
 import java.util.UUID
 
-import akka.actor.Actor
-import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
-import akka.actor.Props
+import akka.pattern.ask
 import scaldi.Injector
 import whisk.common.Logging
 import whisk.common.TransactionId
@@ -13,8 +11,6 @@ import whisk.core.WhiskConfig
 import whisk.core.connector.ActivationMessage
 import whisk.core.container.{ContainerPool => OldContainerPool}
 import whisk.core.containerpool.ActivationTracker
-import whisk.core.containerpool.ContainerPool
-import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.PrewarmingConfig
 import whisk.core.containerpool.Run
 import whisk.core.entity.ByteSize
@@ -32,13 +28,15 @@ import whisk.core.loadBalancer.LoadBalancerProvider
 import whisk.core.mesos.MesosClientActor
 import whisk.core.mesos.MesosTask
 import whisk.core.mesos.Subscribe
+import whisk.core.mesos.Teardown
 import whisk.spi.SpiFactoryModule
 
+import scala.concurrent.Await
 import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
-
 /**
   * Created by tnorris on 6/23/17.
   */
@@ -67,6 +65,15 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
 
   mesosClientActor ! Subscribe
 
+  //handle shutdown
+  sys.addShutdownHook({
+    val complete:Future[Any] = mesosClientActor.ask(Teardown)(20.seconds)
+    Await.result(complete, 25.seconds)
+    logging.info(this, "teardown completed!")
+  })
+
+
+
   //TODO: verify subscribed status
   /** Factory used by the ContainerProxy to physically create a new container. */
   val containerFactory = (tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize) => {
@@ -88,6 +95,7 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
       network = config.invokerContainerNetwork,
       dnsServers = config.invokerContainerDns,
       name = Some(name))
+
     logging.info(this, s"created task is completed??? ${startingTask.isCompleted}" )
     startingTask.map(runningTask => {
       logging.info(this, "returning running task")
@@ -112,24 +120,18 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
     }
   }
 
-  /** Creates a ContainerProxy Actor when being called. */
-  val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(containerFactory, ack, store))
-
   val prewarmKind = "nodejs:6"
   val prewarmExec = ExecManifest.runtimesManifest.resolveDefaultRuntime(prewarmKind).map { manifest =>
     new CodeExecAsString(manifest, "", None)
   }.get
 
-  val pool = actorSystem.actorOf(ContainerPool.props(
-    childFactory,
+
+  val pool = new MesosContainerPool(
+    containerFactory,
+    store,
     OldContainerPool.getDefaultMaxActive(config),
     OldContainerPool.getDefaultMaxActive(config),
-    //activationFeed,
-    actorSystem.actorOf(Props(new Actor {
-      override def receive: Receive = Actor.emptyBehavior
-    })),
-    Some(PrewarmingConfig(2, prewarmExec, 256.MB))))
-//  val pool = new ContainerPool(childFactory, OldContainerPool.getDefaultMaxActive(config), OldContainerPool.getDefaultMaxActive(config), activationFeed, Some(PrewarmingConfig(2, prewarmExec, 256.MB)))
+    Some(PrewarmingConfig(2, prewarmExec, 256.MB)))
 
   /**
     * Retrieves a per subject map of counts representing in-flight activations as seen by the load balancer
@@ -151,51 +153,12 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
     *         if it is ready before timeout otherwise the future fails with ActiveAckTimeout
     */
   override def publish(action: WhiskAction, msg: ActivationMessage, timeout: FiniteDuration)(implicit transid: TransactionId): Future[Future[WhiskActivation]] = {
-//    val container = if (pool.busyPool.size < pool.maxActiveContainers) {
-//      // Schedule a job to a warm container
-//      ContainerPool.schedule(action, msg.user.namespace, freePool.toMap).orElse {
-//        if (busyPool.size + freePool.size < maxPoolSize) {
-//          takePrewarmContainer(r.action).orElse {
-//            Some(createContainer())
-//          }
-//        } else None
-//      }.orElse {
-//        // Remove a container and create a new one for the given job
-//        ContainerPool.remove(r.action, r.msg.user.namespace, freePool.toMap).map { toDelete =>
-//          removeContainer(toDelete)
-//          takePrewarmContainer(r.action).getOrElse {
-//            createContainer()
-//          }
-//        }
-//      }
-//    } else None
-//
-//    container match {
-//      case Some((actor, data)) =>
-//        busyPool.update(actor, data)
-//        freePool.remove(actor)
-//        actor ! r // forwards the run request to the container
-//      case None =>
-//        self ! r
-//    }
-
     action.toExecutableWhiskAction match {
       case Some(executable) =>
         val subject = msg.user.subject.asString
-        //this entry contains the promise that needs to be completed once the run is finished
-        val entry = setupActivation(msg.activationId, subject, "mesos", timeout, transid)
-        //val result = sendActivationToInvoker(messageProducer, msg, invokerName)
-        pool ! Run(executable, msg)
-//        val result1 = result  .map { _ =>
-//          entry.promise.future
-//        }
-//        result1
-
         Future {
-          entry.promise.future
+          pool.run(Run(executable, msg))
         }
-
-        //Future.successful(())
       case None =>
         logging.error(this, s"non-executable action reached the invoker ${action.fullyQualifiedName(false)}")
         Future.failed(new IllegalStateException())
