@@ -104,11 +104,12 @@ function NodeActionService(config, logger) {
      * req.body = { value: Object, meta { activationId : int } }
      */
     this.runCode = function runCode(req) {
-        if (status === Status.ready) {
+        if (status === Status.ready || status === Status.running) {
             setStatus(Status.running);
 
             return doRun(req).then(function (result) {
-                setStatus(Status.ready);
+                //leave status running
+                //setStatus(Status.ready);
 
                 if (typeof result !== "object") {
                     console.error('Result must be of type object but has type "' + typeof result + '":', result);
@@ -117,7 +118,8 @@ function NodeActionService(config, logger) {
                     return responseMessage(200, result);
                 }
             }).catch(function (error) {
-                setStatus(Status.ready);
+                //leave status running
+                //setStatus(Status.ready);
 
                 return Promise.reject(errorMessage(500, "An error has occurred: " + error));
             });
