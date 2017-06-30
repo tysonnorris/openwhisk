@@ -18,16 +18,20 @@ import org.apache.mesos.v1.Protos.TaskID
 import org.apache.mesos.v1.Protos.TaskInfo
 import org.apache.mesos.v1.Protos.TaskStatus
 import org.apache.mesos.v1.Protos.Value
+import spray.httpx.SprayJsonSupport._
 import spray.json.DefaultJsonProtocol._
 import spray.json._
+import spray.json.JsObject
+import spray.http.HttpRequest
+import spray.client.pipelining._
 import whisk.common.Counter
 import whisk.common.Logging
 import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
-import whisk.core.container.HttpUtils
 import whisk.core.container.Interval
 import whisk.core.container.RunResult
 import whisk.core.containerpool.Container
+import whisk.core.entity.ActivationResponse.ContainerResponse
 import whisk.core.containerpool.InitializationError
 import whisk.core.containerpool.docker.ContainerId
 import whisk.core.containerpool.docker.ContainerIp
@@ -186,11 +190,11 @@ object MesosTask {
 object JsonFormatters extends DefaultJsonProtocol{
   implicit val createContainerJson = jsonFormat3(CreateContainer)
 }
-class MesosTask(id: ContainerId, ip: ContainerIp, taskId: String, mesosClientActor: ActorRef)(
+class MesosTask(id: ContainerId, ip: ContainerIp, val taskId: String, mesosClientActor: ActorRef)(
   implicit ec: ExecutionContext, logger: Logging, af:ActorRefFactory) extends Container with ActionLogDriver {//extends DockerContainer(id, ip) {
 
-  /** HTTP connection to the container, will be lazily established by callContainer */
-  private var httpConnection: Option[HttpUtils] = None
+//  /** HTTP connection to the container, will be lazily established by callContainer */
+//  private var httpConnection: Option[HttpUtils] = None
 
   /** Stops the container from consuming CPU cycles. */
   override def suspend()(implicit transid: TransactionId): Future[Unit] = {
@@ -261,18 +265,31 @@ class MesosTask(id: ContainerId, ip: ContainerIp, taskId: String, mesosClientAct
       Vector("log retrieval not implemented")
     }
   }
-  protected def callContainer(path: String, body: JsObject, timeout: FiniteDuration, retry: Boolean = false): Future[RunResult] = {
+
+    val pipeline: HttpRequest => Future[String] = (
+            sendReceive
+                    ~> unmarshal[String]
+            )
+//    val requestCounter = new AtomicInteger(0)
+  protected def callContainer(path: String, body: JsObject, timeout: FiniteDuration, retry: Boolean = false)(implicit transid: TransactionId): Future[RunResult] = {
     val started = Instant.now()
-    val http = httpConnection.getOrElse {
-      val conn = new HttpUtils(s"${ip.asString}:${ip.port}", timeout, 1.MB)
-      httpConnection = Some(conn)
-      conn
-    }
-    Future {
-      http.post(path, body, retry)
-    }.map { response =>
-      val finished = Instant.now()
-      RunResult(Interval(started, finished), response)
-    }
+//    val http = httpConnection.getOrElse {
+//      val conn = new HttpUtils(s"${ip.asString}:${ip.port}", timeout, 1.MB)
+//      httpConnection = Some(conn)
+//      conn
+//    }
+//    Future {
+//      http.post(path, body, retry)
+//    }.map { response =>
+//      val finished = Instant.now()
+//      RunResult(Interval(started, finished), response)
+//    }
+//    logger.info(this, s"###### starting request to container ${requestCounter.incrementAndGet()}")
+        val request = Post(s"http://${ip.asString}:${ip.port}${path}", body)
+        pipeline(request).map (responseBody => {
+            val finished = Instant.now()
+//            logger.info(this, s"###### ending request to container ${requestCounter.decrementAndGet()}")
+            RunResult(Interval(started, finished), Right(ContainerResponse(true, responseBody)))
+        })
   }
 }

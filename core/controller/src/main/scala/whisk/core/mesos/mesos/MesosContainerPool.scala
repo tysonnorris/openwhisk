@@ -9,7 +9,8 @@ import whisk.common.Logging
 import whisk.common.TransactionId
 import whisk.core.container.Interval
 import whisk.core.containerpool.ActivationUnsuccessfulError
-import whisk.core.containerpool.Container
+import whisk.core.mesos.MesosTask
+//import whisk.core.containerpool.Container
 
 import scala.concurrent.ExecutionContext
 //import whisk.core.containerpool.Container
@@ -38,7 +39,7 @@ import scala.util.Success
 /**
   * Created by tnorris on 6/28/17.
   */
-class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[Container],
+class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[MesosTask],
                          storeActivation: (TransactionId, WhiskActivation) => Future[Any],
                          maxActiveContainers: Int,
                          maxPoolSize: Int,
@@ -54,7 +55,7 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
     }
   }
 
-  def run(job:Run):Future[WhiskActivation] = {
+  def run(job:Run)(implicit transid: TransactionId):Future[WhiskActivation] = {
     val container = if (warmPool.size < maxActiveContainers) {
       logging.info(this, "room in pool, will schedule")
       // Schedule a job to a warm container
@@ -80,9 +81,16 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
     container match {
       case Some((actor, data)) =>
           warmPool.update(actor, data)
-        logging.info(this, s"updating container ${actor} with data ${data}")
+//        warmPool(actor) match {
+//          case data: WarmedData => logging.info(this, "data is already warm")
+//          case _ => logging.info(this, s"updating warm data for ${actor}")
+//            warmPool.update(actor, data)
+//        }
+
+        logging.info(this, s"updating container ${actor.taskId} with data ${data}")
         initializeAndRun(actor, data, job)(job.msg.transid)
       case None =>
+        //TODO: when this fails (e.g. when max active reached), coudb read loop repeats, but should fail immediately
         Future.failed(new Exception("could not start container in the mesos cluster..."))
     }
   }
@@ -176,8 +184,12 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
 
       val activation: Future[WhiskActivation] = initialize.flatMap { initInterval =>
 
-        logging.info(this, s"updating warm data for ${containerProxy}")
-        warmPool.update(containerProxy,WarmedData(container, job.msg.user.namespace, job.action, Instant.now) )
+
+        warmPool(containerProxy) match {
+          case data: WarmedData => logging.info(this, "data is already warm")
+          case _ => logging.info(this, s"updating warm data for ${containerProxy}")
+            warmPool.update(containerProxy,WarmedData(container, job.msg.user.namespace, job.action, Instant.now) )
+        }
 
         val parameters = job.msg.content getOrElse JsObject()
 
@@ -190,20 +202,25 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
           // but potentially under-estimates actual deadline
           "deadline" -> (Instant.now.toEpochMilli + actionTimeout.toMillis).toString.toJson)
 
+        val currentActivations = containerProxy.currentActivations.getAndIncrement()
+        logging.info(this, s"starting run on task ${container.taskId} with ${currentActivations} existing in-flight activations")
+
         container.run(parameters, environment, actionTimeout)(job.msg.transid).map {
           case (runInterval, response) =>
+            completeConcurrentRun(containerProxy, container)
             val initRunInterval = Interval(runInterval.start.minusMillis(initInterval.duration.toMillis), runInterval.end)
             ContainerProxy.constructWhiskActivation(job, initRunInterval, response)
         }
       }.recover {
         case InitializationError(interval, response) =>
+          completeConcurrentRun(containerProxy, container)
           ContainerProxy.constructWhiskActivation(job, interval, response)
         case t =>
-          // Actually, this should never happen - but we want to make sure to not miss a problem
+          // Actually, this should never happen - but we want t o make sure to not miss a problem
           logging.error(this, s"caught unexpected error while running activation: ${t}")
+          completeConcurrentRun(containerProxy, container)
           ContainerProxy.constructWhiskActivation(job, Interval.zero, ActivationResponse.whiskError(Messages.abnormalRun))
       }
-
       //    activation.andThen {
       //      // the activation future will always complete with Success
       //      case Success(ack) => sendActiveAck(tid, ack, job.msg.rootControllerIndex)
@@ -231,4 +248,9 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
     result.flatMap(a => a)
   }
 
+  private def completeConcurrentRun(containerProxy:MesosContainerProxy, container:MesosTask)(implicit transId:TransactionId, ec:ExecutionContext): Unit ={
+    val currentActivations = containerProxy.currentActivations.decrementAndGet()
+    logging.info(this, s"completed run on task ${container.taskId} with ${currentActivations} remaining in-flight activations")
+
+  }
 }
