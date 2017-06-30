@@ -55,10 +55,14 @@ class MesosLoadBalancerProvider(config:WhiskConfig, instance: InstanceId, entity
 
 class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(implicit val logging:Logging,val actorSystem:ActorSystem) extends LoadBalancer with ActivationTracker {
   //init mesos framework:
+
+  val mesosMaster = actorSystem.settings.config.getString("whisk.mesos.master-url")
+  logging.info(this, s"subscribing to mesos master at ${mesosMaster}")
+
   implicit val mesosClientActor = actorSystem.actorOf(MesosClientActor.props(
     "whisk-loadbalancer-"+UUID.randomUUID(),
     "whisk-loadbalancer-framework",
-    "http://192.168.99.100:5050",
+    mesosMaster,
     "*",
     taskBuilder = MesosTask.buildTask
   ))
