@@ -34,7 +34,7 @@
       "SERVICE_CHECK_HTTP": "/ping"
       "SERVICE_CHECK_TIMEOUT": "2s"
       "SERVICE_CHECK_INTERVAL": "15s"
-      "JAVA_OPTS": "-Xmx{{ controller.heap }}"
+      "JAVA_OPTS": "-Xmx{{ controller.heap }} -Dwhisk.mesos.master-url=http://192.168.99.100:5050"
       "CONTROLLER_OPTS": "{{ controller.arguments }}"
     volumes:
       - "{{ whisk_logs_dir }}/controller{{ groups['controllers'].index(inventory_hostname) }}:/logs"
