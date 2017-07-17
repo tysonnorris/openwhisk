@@ -110,9 +110,7 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
   /** Sends an active-ack. */
 
   def ack (tid: TransactionId, activation: WhiskActivation, controllerInstance: InstanceId):Future[Unit] = {
-    Future{
-      processCompletion(tid, activation.activationId, activation)
-    }
+    Future.successful(processCompletion(tid, activation.activationId, activation))
   }
   /** Stores an activation in the database. */
   val store = (tid: TransactionId, activation: WhiskActivation) => {
@@ -160,9 +158,8 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
     action.toExecutableWhiskAction match {
       case Some(executable) =>
         val subject = msg.user.subject.asString
-        Future {
-          pool.run(Run(executable, msg))
-        }
+        Future.successful(pool.run(Run(executable, msg)))
+
       case None =>
         logging.error(this, s"non-executable action reached the invoker ${action.fullyQualifiedName(false)}")
         Future.failed(new IllegalStateException())

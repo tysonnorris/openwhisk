@@ -1,53 +1,41 @@
 package whisk.core.mesos
 import java.time.Instant
 
-import akka.actor.ActorRef
-import akka.actor.ActorRefFactory
-import akka.actor.ActorSystem
+import akka.actor.{ActorRef, ActorSystem}
+import akka.http.scaladsl.Http
+import akka.http.scaladsl.client.RequestBuilding.Post
+import akka.http.scaladsl.model.{ContentTypes, HttpRequest, HttpResponse}
+import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.pattern.ask
+import akka.stream.scaladsl.{Keep, Sink, Source}
+import akka.stream.{ActorMaterializer, OverflowStrategy, QueueOfferResult}
 import akka.util.Timeout
 import org.apache.mesos.v1.Protos
 import org.apache.mesos.v1.Protos.ContainerInfo.DockerInfo
 import org.apache.mesos.v1.Protos.ContainerInfo.DockerInfo.PortMapping
 import org.apache.mesos.v1.Protos.Value.Ranges
-import org.apache.mesos.v1.Protos.CommandInfo
-import org.apache.mesos.v1.Protos.ContainerInfo
-import org.apache.mesos.v1.Protos.Offer
-import org.apache.mesos.v1.Protos.Resource
-import org.apache.mesos.v1.Protos.TaskID
-import org.apache.mesos.v1.Protos.TaskInfo
-import org.apache.mesos.v1.Protos.TaskStatus
-import org.apache.mesos.v1.Protos.Value
-import spray.httpx.SprayJsonSupport._
+import org.apache.mesos.v1.Protos.{CommandInfo, ContainerInfo, Offer, Resource, TaskID, TaskInfo, TaskStatus, Value}
 import spray.json.DefaultJsonProtocol._
-import spray.json._
-import spray.json.JsObject
-import spray.http.HttpRequest
-import spray.client.pipelining._
-import whisk.common.Counter
-import whisk.common.Logging
-import whisk.common.LoggingMarkers
-import whisk.common.TransactionId
-import whisk.core.container.Interval
-import whisk.core.container.RunResult
-import whisk.core.containerpool.Container
+import spray.json.{JsObject, _}
+import whisk.core.entity.ActivationResponse.ConnectionError
+
+import scala.concurrent.Promise
+//import spray.http.HttpRequest
+import whisk.common.{Counter, Logging, LoggingMarkers, TransactionId}
+import whisk.core.container.{Interval, RunResult}
+import whisk.core.containerpool.docker.{ContainerId, ContainerIp}
+import whisk.core.containerpool.{Container, InitializationError}
 import whisk.core.entity.ActivationResponse.ContainerResponse
-import whisk.core.containerpool.InitializationError
-import whisk.core.containerpool.docker.ContainerId
-import whisk.core.containerpool.docker.ContainerIp
 import whisk.core.entity.size._
-import whisk.core.entity.ActivationResponse
-import whisk.core.entity.ByteSize
+import whisk.core.entity.{ActivationResponse, ByteSize}
 import whisk.core.invoker.ActionLogDriver
 import whisk.http.Messages
 
 import scala.collection.JavaConverters._
 import scala.concurrent.duration._
-import scala.concurrent.ExecutionContext
-import scala.concurrent.Future
+import scala.concurrent.{ExecutionContext, Future}
 import scala.language.postfixOps
-import scala.util.Failure
-import scala.util.Success
+import scala.util.{Failure, Success}
 
 /**
   * Created by tnorris on 5/22/17.
@@ -64,7 +52,6 @@ object MesosTask {
   implicit val system = ActorSystem( "spray-api-service" )
   implicit val ec = system.dispatcher
 
-
   def create(transid: TransactionId,
              image: String,
              userProvidedImage: Boolean = false,
@@ -74,7 +61,7 @@ object MesosTask {
              network: String = "bridge",
              dnsServers: Seq[String] = Seq(),
              name: Option[String] = None)(
-              implicit mesosClientActor: ActorRef, ec: ExecutionContext, log: Logging, af:ActorRefFactory): Future[MesosTask] = {
+              implicit mesosClientActor: ActorRef, ec: ExecutionContext, log: Logging): Future[MesosTask] = {
     implicit val tid = transid
     //TODO: freeze payload form in case classes?
     val createPayload = CreateContainer("whisk/nodejs6action:latest", "256m", "256")
@@ -191,7 +178,8 @@ object JsonFormatters extends DefaultJsonProtocol{
   implicit val createContainerJson = jsonFormat3(CreateContainer)
 }
 class MesosTask(id: ContainerId, ip: ContainerIp, val taskId: String, mesosClientActor: ActorRef)(
-  implicit ec: ExecutionContext, logger: Logging, af:ActorRefFactory) extends Container with ActionLogDriver {//extends DockerContainer(id, ip) {
+  implicit ec: ExecutionContext, logger: Logging, as:ActorSystem) extends Container with ActionLogDriver {//extends DockerContainer(id, ip) {
+  implicit val materializer = ActorMaterializer()
 
 //  /** HTTP connection to the container, will be lazily established by callContainer */
 //  private var httpConnection: Option[HttpUtils] = None
@@ -261,15 +249,36 @@ class MesosTask(id: ContainerId, ip: ContainerIp, val taskId: String, mesosClien
 
   /** Obtains logs up to a given threshold from the container. Optionally waits for a sentinel to appear. */
   override def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Future[Vector[String]] = {
-    Future{
-      Vector("log retrieval not implemented")
+    Future.successful(Vector("log retrieval not implemented"))
+  }
+
+//    val pipeline: HttpRequest => Future[String] = (
+//            sendReceive
+//                    ~> unmarshal[String]
+//            )
+
+  //based on http://doc.akka.io/docs/akka-http/10.0.6/scala/http/client-side/host-level.html
+  val maxPendingRequests = 500
+  val poolClientFlow = Http().cachedHostConnectionPool[Promise[HttpResponse]](host = ip.asString, port = ip.port)
+  val queue =
+    Source.queue[(HttpRequest, Promise[HttpResponse])](maxPendingRequests, OverflowStrategy.backpressure)
+      .via(poolClientFlow)
+      .toMat(Sink.foreach({
+        case ((Success(resp), p)) => p.success(resp)
+        case ((Failure(e), p))    => p.failure(e)
+      }))(Keep.left)
+      .run()
+
+  def queueRequest(request: HttpRequest): Future[HttpResponse] = {
+    val responsePromise = Promise[HttpResponse]()
+    queue.offer(request -> responsePromise).flatMap {
+      case QueueOfferResult.Enqueued    => responsePromise.future
+      case QueueOfferResult.Dropped     => Future.failed(new RuntimeException("Queue overflowed. Try again later."))
+      case QueueOfferResult.Failure(ex) => Future.failed(ex)
+      case QueueOfferResult.QueueClosed => Future.failed(new RuntimeException("Queue was closed (pool shut down) while running the request. Try again later."))
     }
   }
 
-    val pipeline: HttpRequest => Future[String] = (
-            sendReceive
-                    ~> unmarshal[String]
-            )
 //    val requestCounter = new AtomicInteger(0)
   protected def callContainer(path: String, body: JsObject, timeout: FiniteDuration, retry: Boolean = false)(implicit transid: TransactionId): Future[RunResult] = {
     val started = Instant.now()
@@ -285,11 +294,29 @@ class MesosTask(id: ContainerId, ip: ContainerIp, val taskId: String, mesosClien
 //      RunResult(Interval(started, finished), response)
 //    }
 //    logger.info(this, s"###### starting request to container ${requestCounter.incrementAndGet()}")
-        val request = Post(s"http://${ip.asString}:${ip.port}${path}", body)
-        pipeline(request).map (responseBody => {
-            val finished = Instant.now()
-//            logger.info(this, s"###### ending request to container ${requestCounter.decrementAndGet()}")
-            RunResult(Interval(started, finished), Right(ContainerResponse(true, responseBody)))
+//        val request = Post(s"http://${ip.asString}:${ip.port}${path}", body)
+//        pipeline(request).map (responseBody => {
+//            val finished = Instant.now()
+////            logger.info(this, s"###### ending request to container ${requestCounter.decrementAndGet()}")
+//            RunResult(Interval(started, finished), Right(ContainerResponse(true, responseBody)))
+//        })
+
+    val req = Post(path).withEntity(ContentTypes.`application/json` ,body.toString())
+    queueRequest(req).flatMap( response => {
+      val finished = Instant.now()
+      if (response.status.isSuccess()){
+
+        Unmarshal(response.entity).to[String].map(respString => {
+          RunResult(Interval(started, finished), Right(ContainerResponse(true, respString)))
         })
+      } else {
+        Unmarshal(response.entity).to[String].map(respString => {
+          RunResult(Interval(started, finished), Left(ConnectionError(new Exception(response.toString()))))
+        })
+
+      }
+    })
+
+
   }
 }

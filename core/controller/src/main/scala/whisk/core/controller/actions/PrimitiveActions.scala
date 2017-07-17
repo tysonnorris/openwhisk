@@ -115,11 +115,18 @@ protected[actions] trait PrimitiveActions {
         postedFuture flatMap { activationResponse =>
             transid.finished(this, startLoadbalancer)
             if (blocking) {
-                waitForActivationResponse(user, message.activationId, timeout, activationResponse) map {
+                activationResponse map {
                     whiskActivation => (whiskActivation.activationId, Some(whiskActivation))
                 } andThen {
                     case _ => transid.finished(this, startActivation)
                 }
+
+//
+//                waitForActivationResponse(user, message.activationId, timeout, activationResponse) map {
+//                    whiskActivation => (whiskActivation.activationId, Some(whiskActivation))
+//                } andThen {
+//                    case _ => transid.finished(this, startActivation)
+//                }
             } else {
                 transid.finished(this, startActivation)
                 Future.successful { (message.activationId, None) }
