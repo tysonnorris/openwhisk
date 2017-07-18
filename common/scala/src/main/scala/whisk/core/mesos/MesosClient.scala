@@ -472,42 +472,50 @@ object MesosClient {
       var tasksInNeed:ListBuffer[TaskReqs] = t.to[ListBuffer]
       var result = Map[OfferID,Seq[TaskInfo]]()
       var portIndex = 0
+      var acceptedOfferAgent:String = null//accepted offers must reside on single agent: https://github.com/apache/mesos/blob/master/src/master/validation.cpp#L1768
       o.map(offer => {
 
         //TODO: manage explicit and default roles, similar to https://github.com/mesos/kafka/pull/103/files
 
 
-        val agentId = offer.getAgentId
-        val resources = offer.getResourcesList.asScala
-          .filter(_.getRole == role) //ignore resources with other roles
-          .filter(res => Seq("cpus", "mem").contains(res.getName))
-          .groupBy(_.getName)
-          .mapValues(resources => {
-            resources.iterator.next().getScalar.getValue
-          })
-        if (resources.size == 2) {
-          var remainingOfferCpus = resources("cpus")
-          var remainingOfferMem = resources("mem")
-          var acceptedTasks = ListBuffer[TaskInfo]()
-          tasksInNeed.map(task => {
+        val agentId = offer.getAgentId.getValue
+        if (acceptedOfferAgent == null || acceptedOfferAgent == agentId){
+          acceptedOfferAgent = agentId
+          val resources = offer.getResourcesList.asScala
+            .filter(_.getRole == role) //ignore resources with other roles
+            .filter(res => Seq("cpus", "mem").contains(res.getName))
+            .groupBy(_.getName)
+            .mapValues(resources => {
+              resources.iterator.next().getScalar.getValue
+            })
+          if (resources.size == 2) {
+            var remainingOfferCpus = resources("cpus")
+            var remainingOfferMem = resources("mem")
+            var acceptedTasks = ListBuffer[TaskInfo]()
+            tasksInNeed.map(task => {
 
-            val taskCpus = task.cpus
-            val taskMem = task.mem
+              val taskCpus = task.cpus
+              val taskMem = task.mem
 
-            //check for a good fit
-            if (remainingOfferCpus > taskCpus &&
-              remainingOfferMem > taskMem) {
-              remainingOfferCpus -= taskCpus
-              remainingOfferMem -= taskMem
-              //move the task from InNeed to Accepted
-              acceptedTasks += builder(task, offer, portIndex)
-              portIndex += 1
-              tasksInNeed -= task
+              //check for a good fit
+              if (remainingOfferCpus > taskCpus &&
+                remainingOfferMem > taskMem) {
+                remainingOfferCpus -= taskCpus
+                remainingOfferMem -= taskMem
+                //move the task from InNeed to Accepted
+
+                acceptedTasks += builder(task, offer, portIndex)
+                portIndex += 1
+                tasksInNeed -= task
+              }
+            })
+            if (!acceptedTasks.isEmpty){
+              result += (offer.getId -> acceptedTasks)
             }
-          })
-          if (!acceptedTasks.isEmpty){
-            result += (offer.getId -> acceptedTasks)
           }
+
+        } else {
+          //log.info("ignoring offers for other slaves for now")
         }
         result
       })

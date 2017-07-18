@@ -81,6 +81,7 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
   //TODO: verify subscribed status
   /** Factory used by the ContainerProxy to physically create a new container. */
   val containerFactory = (tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize) => {
+    //TODO: install all images in adobe
     val image = if (userProvidedImage) {
       actionImage.publicImageName
     } else {
@@ -88,7 +89,7 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
     }
 
 
-    logging.info(this, "using Mesos to create a container...")
+    logging.info(this, s"using Mesos to create a container with image ${image}...")
     val startingTask = MesosTask.create(
       tid,
       image = image,
@@ -133,7 +134,7 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
     store,
     OldContainerPool.getDefaultMaxActive(config),
     OldContainerPool.getDefaultMaxActive(config),
-    Some(PrewarmingConfig(2, prewarmExec, 256.MB)))
+    Some(PrewarmingConfig(10, prewarmExec, 256.MB)))
 
   /**
     * Retrieves a per subject map of counts representing in-flight activations as seen by the load balancer

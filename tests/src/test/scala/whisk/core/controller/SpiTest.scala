@@ -55,11 +55,11 @@ object SpiTest extends TransactionCounter {
 
     val whiskConfig = new WhiskConfig(requiredProperties)//, propertiesFile = new File("./whisk.properties"))
 
-    SharedModules.initSharedModules(List(new SharedModule(actorSystem, whiskConfig, logger, null, null)))
+    SharedModules.initSharedModules(List(new SharedModule(actorSystem, whiskConfig, logger, null, null, null)))
 
     val entityStore = WhiskEntityStore.datastore(whiskConfig)
 
-    SharedModules.initSharedModules(List(new SharedModule(actorSystem, whiskConfig, logger, instance, entityStore)))
+    SharedModules.initSharedModules(List(new SharedModule(actorSystem, whiskConfig, logger, instance, entityStore, null)))
 
     println("entityStore:" + entityStore)
     implicit val transactionId = transid()

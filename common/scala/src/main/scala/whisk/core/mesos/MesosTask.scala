@@ -65,15 +65,8 @@ object MesosTask {
              name: Option[String] = None)(
               implicit mesosClientActor: ActorRef, ec: ExecutionContext, log: Logging, af:ActorRefFactory): Future[MesosTask] = {
     implicit val tid = transid
-    //TODO: freeze payload form in case classes?
-    val createPayload = CreateContainer("whisk/nodejs6action:latest", "256m", "256")
 
     log.info(this, "creating task for image...")
-
-    val payload = containerInitializerPayload
-    log.info(this, s"task creation payload is: ${containerInitializerPayload.toString()}")
-
-
 
     val taskId = s"task-${counter.next()}-${startTime}"
 
@@ -96,11 +89,7 @@ object MesosTask {
 
 
   }
-  def containerInitializerPayload: JsObject = {
-    val env = JsObject("__OW_API_HOST" -> JsString("my.host.name"))
-    val container = JsObject("image" -> JsString("whisk/nodejs6action:latest"), "memory" -> JsString("128m"), "cpuShares" -> JsString("128"), "environment" -> env)
-    JsObject("container" -> container)
-  }
+
   def buildTask(reqs:TaskReqs, offer:Offer, portIndex:Int):TaskInfo = {
     val containerPort = reqs.port
     //getting the port from the ranges is hard...
