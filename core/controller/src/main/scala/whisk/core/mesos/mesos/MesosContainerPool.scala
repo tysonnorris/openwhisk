@@ -3,33 +3,21 @@ package whisk.core.mesos.mesos
 import java.time.Instant
 
 import spray.json.DefaultJsonProtocol._
-import spray.json.JsObject
-import spray.json._
-import whisk.common.Logging
-import whisk.common.TransactionId
+import spray.json.{JsObject, _}
+import whisk.common.{Logging, TransactionId}
 import whisk.core.container.Interval
 import whisk.core.containerpool.ActivationUnsuccessfulError
 import whisk.core.entity.EntityName
 import whisk.core.mesos.MesosTask
+
+import scala.collection.concurrent.TrieMap
 //import whisk.core.containerpool.Container
 
 import scala.concurrent.ExecutionContext
 //import whisk.core.containerpool.Container
-import whisk.core.containerpool.ContainerData
-import whisk.core.containerpool.ContainerPool
-import whisk.core.containerpool.ContainerProxy
-import whisk.core.containerpool.InitializationError
-import whisk.core.containerpool.NoData
-import whisk.core.containerpool.PreWarmedData
-import whisk.core.containerpool.PrewarmingConfig
-import whisk.core.containerpool.Run
-import whisk.core.containerpool.WarmedData
-import whisk.core.entity.ActivationResponse
-import whisk.core.entity.ByteSize
-import whisk.core.entity.CodeExec
+import whisk.core.containerpool.{ContainerData, ContainerPool, ContainerProxy, InitializationError, NoData, PreWarmedData, PrewarmingConfig, Run, WarmedData}
 import whisk.core.entity.ExecManifest.ImageName
-import whisk.core.entity.ExecutableWhiskAction
-import whisk.core.entity.WhiskActivation
+import whisk.core.entity.{ActivationResponse, ByteSize, CodeExec, ExecutableWhiskAction, WhiskActivation}
 import whisk.core.entity.size._
 import whisk.http.Messages
 
@@ -47,6 +35,7 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
                          prewarmConfig: Option[PrewarmingConfig] = None)(implicit val logging:Logging, val ec:ExecutionContext) {
 
   val warmPool = mutable.Map[MesosContainerProxy, ContainerData]()
+  val initPool = new TrieMap[Any, Any]()
   val prewarmedPool = mutable.Map[MesosContainerProxy, ContainerData]()
 
   prewarmConfig.foreach { config =>
@@ -57,11 +46,12 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
   }
 
   def run(job:Run)(implicit transid: TransactionId):Future[WhiskActivation] = {
+    //TODO: if no offers are available for certain time period, we can assume no containers will be allowed
     //val container = if (warmPool.size < maxActiveContainers) {
     val container = {
       logging.info(this, "room in pool, will schedule")
       // Schedule a job to a warm container
-      schedule(job.action, job.msg.user.namespace, warmPool.toMap).orElse {
+      schedule(job, job.action, job.msg.user.namespace, warmPool.toMap).orElse {
         //if (warmPool.size < maxActiveContainers) {
           logging.info(this, "will try to use a prewarm...")
           takePrewarmContainer(job.action).orElse {
@@ -94,28 +84,17 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
 
     container match {
       case Some((actor, data)) =>
-          //warmPool.update(actor, data)
-          logging.info(this, s"updating container ${actor.taskId} with data ${data}")
-          //whether prewarm or warm data, replace with warmeddata to indiciate this container is available for this action (but may not be initialized)
-          warmPool.update(actor, WarmedData(null, job.msg.user.namespace, job.action, Instant.now))
-//        if (warmPool.contains(actor)){
-//          logging.info(this, s"updating existing  container ${actor.taskId} with data ${data}")
-//
-//          warmPool(actor) match {
-//            case data: WarmedData => logging.info(this, "data is already warm")
-//            case prewarmData: PreWarmedData =>  warmPool.update(actor, WarmedData(null, job.msg.user.namespace, job.action, Instant.now))
-//            case noData:NoData =>  warmPool.update(actor, WarmedData(null, job.msg.user.namespace, job.action, Instant.now))
-//            case _ => logging.info(this, s"unexpected data")
-//              //warmPool.update(actor, data)
-//          }
-//        } else {
-//          warmPool.update(actor, data)
-//          logging.info(this, s"updating container ${actor.taskId} with data ${data}")
+          warmPool.update(actor, data)
+//        warmPool(actor) match {
+//          case data: WarmedData => logging.info(this, "data is already warm")
+//          case _ => logging.info(this, s"updating warm data for ${actor}")
+//            warmPool.update(actor, data)
 //        }
 
+        logging.info(this, s"updating container ${actor.taskId} with data ${data}")
         initializeAndRun(actor, data, job)(job.msg.transid)
       case None =>
-        //TODO: when this fails (e.g. when max active reached), could read loop repeats, but should fail immediately
+        //TODO: when this fails (e.g. when max active reached), coudb read loop repeats, but should fail immediately
         Future.failed(new Exception("could not start container in the mesos cluster..."))
     }
   }
@@ -280,17 +259,67 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
   }
 
   val maxConcurrency = 200
-  def schedule(action: ExecutableWhiskAction, invocationNamespace: EntityName, idles: Map[MesosContainerProxy, ContainerData]): Option[(MesosContainerProxy, ContainerData)] = {
-    idles.find {
-      case (proxy, WarmedData(_, _, `action`, _)) => {
-        if (proxy.currentActivations.get() < maxConcurrency) {
-          true
-        } else {
-          logging.info(this, s"exceeded max concurrency of ${maxConcurrency} ")
-          false
-        }
+  def schedule(job:Run, action: ExecutableWhiskAction, invocationNamespace: EntityName, idles: Map[MesosContainerProxy, ContainerData])(implicit transid:TransactionId): Option[(MesosContainerProxy, ContainerData)] = {
+    //TODO: more intel: find the container with least amount of concurrently active activations
+    //TODO: track currentActivations in a TrieMap locally here instead of in the proxy
+    idles.foreach {
+      case (p, c) => logging.info(this, s"       container ${p.container.map(c => c.taskId)} has  ${p.currentActivations} current activations")
+    }
+
+    val available = idles.find {
+      case (proxy, WarmedData(_, _, `action`, _)) if (proxy.currentActivations.get() < maxConcurrency) => {
+        true
       }
-      case _ => false
+      case _ => {
+      false
+      }
+    }
+
+    if (!available.isEmpty){
+      logging.info(this, s"found an available container for ${action.name}...")
+      available
+    } else {
+      idles.find {
+        case (proxy, WarmedData(_, _, `action`, _)) if (proxy.currentActivations.get() < maxConcurrency) => {
+          true
+        }
+        case (proxy, WarmedData(_, _, `action`, _)) => {
+          logging.info(this, s"using container ${proxy.container.map(c => c.taskId)}")
+          val currentActivations = proxy.currentActivations.get()
+          if (currentActivations < maxConcurrency) {
+            true
+          } else {
+            val actionKey = action.namespace.toString + action.name.toString
+
+            initPool.putIfAbsent(actionKey, action) match {
+              case None => {
+                logging.info(this, s"${currentActivations} exceeded max concurrency of ${maxConcurrency} for action ${action.name} in container ${proxy.container}, launching 1 more ")
+                //val newProxy = createContainer(job)._1
+                val newProxy = takePrewarmContainer(job.action).getOrElse {
+                  createContainer(job)
+                }._1
+
+                newProxy.container.map (newContainer => {
+                  logging.info(this, "about to initialize a running container for excessive concurrency...")
+                  newContainer.initialize(job.action.containerInitializer, job.action.limits.timeout.duration).map { initInterval =>
+                    logging.info(this, s"updating warm data for ${newProxy}  for excessive concurrency")
+                    warmPool.put(newProxy, WarmedData(newContainer, job.msg.user.namespace, job.action, Instant.now))
+                    initPool.remove(actionKey)
+                  }
+                })
+                logging.info(this, s"returning new proxy ${newProxy}")
+              }
+              case Some(_) => {
+                logging.info(this, s"${currentActivations} exceeded max concurrency of ${maxConcurrency} for action ${action.name} in container ${proxy.container}, already launching additional container(s) ")
+              }
+            }
+
+            true
+          }
+        }
+        case _ => false
+      }
     }
   }
+
 }

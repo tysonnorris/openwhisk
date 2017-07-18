@@ -66,7 +66,7 @@ object MesosTask {
               implicit mesosClientActor: ActorRef, ec: ExecutionContext, log: Logging, af:ActorRefFactory): Future[MesosTask] = {
     implicit val tid = transid
 
-    log.info(this, "creating task for image...")
+    log.info(this, s"creating task for image ${image}...")
 
     val taskId = s"task-${counter.next()}-${startTime}"
 
@@ -129,7 +129,7 @@ object MesosTask {
       .setGracePeriodSeconds(25)
 
     val task = TaskInfo.newBuilder
-      .setName("test")
+      .setName(reqs.taskId)
       .setTaskId(TaskID.newBuilder
         .setValue(reqs.taskId))
       .setAgentId(offer.getAgentId)
