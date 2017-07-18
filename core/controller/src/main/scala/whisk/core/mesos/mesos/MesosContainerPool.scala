@@ -9,6 +9,7 @@ import whisk.common.Logging
 import whisk.common.TransactionId
 import whisk.core.container.Interval
 import whisk.core.containerpool.ActivationUnsuccessfulError
+import whisk.core.entity.EntityName
 import whisk.core.mesos.MesosTask
 //import whisk.core.containerpool.Container
 
@@ -56,17 +57,26 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
   }
 
   def run(job:Run)(implicit transid: TransactionId):Future[WhiskActivation] = {
-    val container = if (warmPool.size < maxActiveContainers) {
+    //val container = if (warmPool.size < maxActiveContainers) {
+    val container = {
       logging.info(this, "room in pool, will schedule")
       // Schedule a job to a warm container
-      ContainerPool.schedule(job.action, job.msg.user.namespace, warmPool.toMap).orElse {
-        if (warmPool.size < maxPoolSize) {
+      schedule(job.action, job.msg.user.namespace, warmPool.toMap).orElse {
+        //if (warmPool.size < maxActiveContainers) {
           logging.info(this, "will try to use a prewarm...")
           takePrewarmContainer(job.action).orElse {
             logging.info(this, "will create new container...")
             Some(createContainer(job))
           }
-        } else None
+//        } else {
+//
+//
+//          logging.warn(this,s"no room in pool with ${warmPool.size} warm containers and all existing containers at max capacity")
+//          warmPool.keys.foreach(proxy => {
+//            logging.info(this, s"    proxy ${proxy} has data ${warmPool.get(proxy)}")
+//          })
+//          None
+//        }
       }.orElse {
         // Remove a container and create a new one for the given job
         ContainerPool.remove(job.action, job.msg.user.namespace, warmPool.toMap).map { toDelete =>
@@ -76,21 +86,36 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
           }
         }
       }
-    } else None
+    }
+//    } else {
+//      logging.info(this, s"no room in pool with ${warmPool.size} warm containers")
+//      None
+//    }
 
     container match {
       case Some((actor, data)) =>
-          warmPool.update(actor, data)
-//        warmPool(actor) match {
-//          case data: WarmedData => logging.info(this, "data is already warm")
-//          case _ => logging.info(this, s"updating warm data for ${actor}")
-//            warmPool.update(actor, data)
+          //warmPool.update(actor, data)
+          logging.info(this, s"updating container ${actor.taskId} with data ${data}")
+          //whether prewarm or warm data, replace with warmeddata to indiciate this container is available for this action (but may not be initialized)
+          warmPool.update(actor, WarmedData(null, job.msg.user.namespace, job.action, Instant.now))
+//        if (warmPool.contains(actor)){
+//          logging.info(this, s"updating existing  container ${actor.taskId} with data ${data}")
+//
+//          warmPool(actor) match {
+//            case data: WarmedData => logging.info(this, "data is already warm")
+//            case prewarmData: PreWarmedData =>  warmPool.update(actor, WarmedData(null, job.msg.user.namespace, job.action, Instant.now))
+//            case noData:NoData =>  warmPool.update(actor, WarmedData(null, job.msg.user.namespace, job.action, Instant.now))
+//            case _ => logging.info(this, s"unexpected data")
+//              //warmPool.update(actor, data)
+//          }
+//        } else {
+//          warmPool.update(actor, data)
+//          logging.info(this, s"updating container ${actor.taskId} with data ${data}")
 //        }
 
-        logging.info(this, s"updating container ${actor.taskId} with data ${data}")
         initializeAndRun(actor, data, job)(job.msg.transid)
       case None =>
-        //TODO: when this fails (e.g. when max active reached), coudb read loop repeats, but should fail immediately
+        //TODO: when this fails (e.g. when max active reached), could read loop repeats, but should fail immediately
         Future.failed(new Exception("could not start container in the mesos cluster..."))
     }
   }
@@ -252,5 +277,20 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
     val currentActivations = containerProxy.currentActivations.decrementAndGet()
     logging.info(this, s"completed run on task ${container.taskId} with ${currentActivations} remaining in-flight activations")
 
+  }
+
+  val maxConcurrency = 200
+  def schedule(action: ExecutableWhiskAction, invocationNamespace: EntityName, idles: Map[MesosContainerProxy, ContainerData]): Option[(MesosContainerProxy, ContainerData)] = {
+    idles.find {
+      case (proxy, WarmedData(_, _, `action`, _)) => {
+        if (proxy.currentActivations.get() < maxConcurrency) {
+          true
+        } else {
+          logging.info(this, s"exceeded max concurrency of ${maxConcurrency} ")
+          false
+        }
+      }
+      case _ => false
+    }
   }
 }

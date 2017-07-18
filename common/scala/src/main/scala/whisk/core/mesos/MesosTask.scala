@@ -1,7 +1,7 @@
 package whisk.core.mesos
 import java.time.Instant
 
-import akka.actor.{ActorRef, ActorSystem}
+import akka.actor.{ActorRef, ActorRefFactory, ActorSystem}
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.client.RequestBuilding.Post
 import akka.http.scaladsl.model.{ContentTypes, HttpRequest, HttpResponse}
@@ -13,8 +13,9 @@ import akka.util.Timeout
 import org.apache.mesos.v1.Protos
 import org.apache.mesos.v1.Protos.ContainerInfo.DockerInfo
 import org.apache.mesos.v1.Protos.ContainerInfo.DockerInfo.PortMapping
+import org.apache.mesos.v1.Protos.HealthCheck.TCPCheckInfo
 import org.apache.mesos.v1.Protos.Value.Ranges
-import org.apache.mesos.v1.Protos.{CommandInfo, ContainerInfo, Offer, Resource, TaskID, TaskInfo, TaskStatus, Value}
+import org.apache.mesos.v1.Protos.{CommandInfo, ContainerInfo, HealthCheck, Offer, Resource, TaskID, TaskInfo, TaskStatus, Value}
 import spray.json.DefaultJsonProtocol._
 import spray.json.{JsObject, _}
 import whisk.core.entity.ActivationResponse.ConnectionError
@@ -44,13 +45,14 @@ case class Environment()
 case class CreateContainer (image: String, memory:String, cpuShare:String)
 
 object MesosTask {
-  val taskLaunchTimeout = Timeout(15 seconds)
+  val taskLaunchTimeout = Timeout(30 seconds)
   val taskDeleteTimeout = Timeout(10 seconds)
   val counter = new Counter()
   val startTime = Instant.now.getEpochSecond
   //implicit var ref:ActorRefFactory
   implicit val system = ActorSystem( "spray-api-service" )
   implicit val ec = system.dispatcher
+
 
   def create(transid: TransactionId,
              image: String,
@@ -61,7 +63,7 @@ object MesosTask {
              network: String = "bridge",
              dnsServers: Seq[String] = Seq(),
              name: Option[String] = None)(
-              implicit mesosClientActor: ActorRef, ec: ExecutionContext, log: Logging): Future[MesosTask] = {
+              implicit mesosClientActor: ActorRef, ec: ExecutionContext, log: Logging, af:ActorRefFactory): Future[MesosTask] = {
     implicit val tid = transid
     //TODO: freeze payload form in case classes?
     val createPayload = CreateContainer("whisk/nodejs6action:latest", "256m", "256")
@@ -128,6 +130,15 @@ object MesosTask {
     val agentHost = offer.getHostname
     val dockerImage = reqs.dockerImage
 
+    val healthCheck = HealthCheck.newBuilder()
+        .setType(HealthCheck.Type.TCP)
+      .setTcp(TCPCheckInfo.newBuilder()
+        .setPort(containerPort))
+      .setDelaySeconds(0)
+      .setIntervalSeconds(1)
+      .setTimeoutSeconds(1)
+      .setGracePeriodSeconds(25)
+
     val task = TaskInfo.newBuilder
       .setName("test")
       .setTaskId(TaskID.newBuilder
@@ -150,6 +161,7 @@ object MesosTask {
             .setHostPort(hostPort)
             .build)
         ).build())
+      .setHealthCheck(healthCheck)
       .addResources(Resource.newBuilder()
         .setName("ports")
         .setType(Value.Type.RANGES)

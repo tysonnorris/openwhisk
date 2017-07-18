@@ -39,7 +39,7 @@ dependencies {
 
 
     //for mesos
-    compile "org.apache.mesos:mesos:1.0.0"
+    compile "org.apache.mesos:mesos:1.2.1"
     //for recordIO
     compile "com.lightbend.akka:akka-stream-alpakka-simple-codecs_2.11:0.9"
     //for JSON printing of protobuf

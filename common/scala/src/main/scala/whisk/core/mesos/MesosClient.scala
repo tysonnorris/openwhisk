@@ -103,7 +103,7 @@ class MesosClientActor (val id:String, val frameworkName:String, val master:Stri
 
 
   def handleUpdate(event: Update) = {
-    log.info(s"received update for ${event.getStatus.getTaskId} in state ${event.getStatus.getState}")
+    log.info(s"received update for task ${event.getStatus.getTaskId.getValue} in state ${event.getStatus.getState}")
 
     val oldTaskDetails = taskStatuses(event.getStatus.getTaskId.getValue)
     val newTaskDetailsAgentId = event.getStatus.getAgentId.getValue
@@ -113,13 +113,17 @@ class MesosClientActor (val id:String, val frameworkName:String, val master:Stri
       case Some(promise) => {
         event.getStatus.getState match {
           case TaskState.TASK_RUNNING =>
-            promise.success(newTaskDetails)
-            pendingTaskPromises -= event.getStatus.getTaskId.getValue
-          case TaskState.TASK_FINISHED | TaskState.TASK_KILLED | TaskState.TASK_KILLING | TaskState.TASK_LOST | TaskState.TASK_ERROR | TaskState.TASK_FAILED =>
+            log.info(s"received TASK_RUNNING update for ${event.getStatus.getTaskId.getValue} and task health is ${event.getStatus.getHealthy}")
+            if (event.getStatus.getHealthy){
+              promise.success(newTaskDetails)
+              pendingTaskPromises -= event.getStatus.getTaskId.getValue
+            }
+          case TaskState.TASK_STAGING | TaskState.TASK_STARTING =>
+            log.info(s"task still launching task ${event.getStatus.getTaskId.getValue} (in state ${event.getStatus.getState}")
+          case _ =>
+            log.warning(s"failing task ${event.getStatus.getTaskId.getValue}  msg: ${event.getStatus.getMessage}")
             promise.failure(new Exception(s"task in state ${event.getStatus.getState} msg: ${event.getStatus.getMessage}"))
             pendingTaskPromises -= event.getStatus.getTaskId.getValue
-          case TaskState.TASK_STAGING | TaskState.TASK_STARTING =>
-            log.info(s"task still launching task ${event.getStatus.getTaskId} (in state ${event.getStatus.getState}")
         }
       }
       case None => {
@@ -131,11 +135,11 @@ class MesosClientActor (val id:String, val frameworkName:String, val master:Stri
           case TaskState.TASK_KILLED  =>
             promise.success(newTaskDetails)
             deleteTaskPromises -= event.getStatus.getTaskId.getValue
-          case TaskState.TASK_FINISHED | TaskState.TASK_LOST | TaskState.TASK_ERROR | TaskState.TASK_FAILED =>
-            deleteTaskPromises -= event.getStatus.getTaskId.getValue
-            promise.failure(new Exception(s"task in state ${event.getStatus.getState} msg: ${event.getStatus.getMessage}"))
           case TaskState.TASK_RUNNING | TaskState.TASK_KILLING | TaskState.TASK_STAGING | TaskState.TASK_STARTING =>
-            log.info(s"task still killing task ${event.getStatus.getTaskId} (in state ${event.getStatus.getState}")
+            log.info(s"task still killing task ${event.getStatus.getTaskId.getValue} (in state ${event.getStatus.getState}")
+          case _ =>
+            deleteTaskPromises -= event.getStatus.getTaskId.getValue
+            promise.failure(new Exception(s"task ended in unexpected state ${event.getStatus.getState} msg: ${event.getStatus.getMessage}"))
         }
       }
       case None => {
@@ -395,7 +399,8 @@ class MesosClientActor (val id:String, val frameworkName:String, val master:Stri
           .setUser(Optional.ofNullable(System.getenv("user")).orElse("root")) // https://issues.apache.org/jira/browse/MESOS-3747
           .setName(frameworkName)
           .setFailoverTimeout(0)
-          .setRole(role).build)
+          //.setRole(role)
+          .build)
         .build())
       .build()
 
