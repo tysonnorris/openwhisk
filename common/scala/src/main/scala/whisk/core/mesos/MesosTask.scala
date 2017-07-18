@@ -70,7 +70,9 @@ object MesosTask {
 
     val taskId = s"task-${counter.next()}-${startTime}"
 
-    val task = TaskReqs(taskId, image, 0.1, 24, 8080)
+    val mesosCpuShares = cpuShares / 1024.0 //convert openwhisk (docker based) shares to mesos (cpu percentage)
+    val mesosRam = memory.toMB.toInt
+    val task = TaskReqs(taskId, image, mesosCpuShares, mesosRam, 8080)
 
     val launched:Future[TaskDetails] = mesosClientActor.ask(SubmitTask(task))(taskLaunchTimeout).mapTo[TaskDetails]
 

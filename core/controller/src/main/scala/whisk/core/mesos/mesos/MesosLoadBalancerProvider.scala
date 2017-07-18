@@ -134,7 +134,7 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
     store,
     OldContainerPool.getDefaultMaxActive(config),
     OldContainerPool.getDefaultMaxActive(config),
-    Some(PrewarmingConfig(10, prewarmExec, 256.MB)))
+    Some(PrewarmingConfig(2, prewarmExec, 256.MB)))
 
   /**
     * Retrieves a per subject map of counts representing in-flight activations as seen by the load balancer
