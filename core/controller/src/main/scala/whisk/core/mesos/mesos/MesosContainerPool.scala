@@ -32,10 +32,13 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
                          storeActivation: (TransactionId, WhiskActivation) => Future[Any],
                          maxActiveContainers: Int,
                          maxPoolSize: Int,
-                         prewarmConfig: Option[PrewarmingConfig] = None)(implicit val logging:Logging, val ec:ExecutionContext) {
+                         prewarmConfig: Option[PrewarmingConfig] = None,
+                         maxConcurrency:Int = 200
+                        )(implicit val logging:Logging, val ec:ExecutionContext) {
 
   val warmPool = mutable.Map[MesosContainerProxy, ContainerData]()
-  val initPool = new TrieMap[Any, Any]()
+  val initPool = new TrieMap[Any, LazyComp]()
+//  val initProxy = mutable.Map[String, MesosContainerProxy]()
   val prewarmedPool = mutable.Map[MesosContainerProxy, ContainerData]()
 
   prewarmConfig.foreach { config =>
@@ -54,10 +57,13 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
       schedule(job, job.action, job.msg.user.namespace, warmPool.toMap).orElse {
         //if (warmPool.size < maxActiveContainers) {
           logging.info(this, "will try to use a prewarm...")
-          takePrewarmContainer(job.action).orElse {
-            logging.info(this, "will create new container...")
-            Some(createContainer(job))
-          }
+
+          initAction(job)
+
+//          takePrewarmContainer(job.action).orElse {
+//            logging.info(this, "will create new container...")
+//            Some(createContainer(job))
+//          }
 //        } else {
 //
 //
@@ -71,10 +77,14 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
         // Remove a container and create a new one for the given job
         ContainerPool.remove(job.action, job.msg.user.namespace, warmPool.toMap).map { toDelete =>
           removeContainer(toDelete)
-          takePrewarmContainer(job.action).getOrElse {
+//          takePrewarmContainer(job.action).getOrElse {
+//            createContainer(job)
+//          }
+          initAction(job).getOrElse {
             createContainer(job)
           }
         }
+
       }
     }
 //    } else {
@@ -258,7 +268,6 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
 
   }
 
-  val maxConcurrency = 200
   def schedule(job:Run, action: ExecutableWhiskAction, invocationNamespace: EntityName, idles: Map[MesosContainerProxy, ContainerData])(implicit transid:TransactionId): Option[(MesosContainerProxy, ContainerData)] = {
     //TODO: more intel: find the container with least amount of concurrently active activations
     //TODO: track currentActivations in a TrieMap locally here instead of in the proxy
@@ -294,34 +303,45 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
 
     if (worst.isDefined && worst.get.currentActivations.get() > maxConcurrency) {
       val currentWorst = worst.get.currentActivations.get()
-      val actionKey = action.namespace.toString + action.name.toString
+      initAction(job, worst, Some(currentWorst))
 
-      initPool.putIfAbsent(actionKey, action) match {
-        case None => {
-          logging.info(this, s"${currentWorst} exceeded max concurrency of ${maxConcurrency} for action ${action.name} in container ${worst.get.container}, launching 1 more ")
-          //val newProxy = createContainer(job)._1
-          val newProxy = takePrewarmContainer(job.action).getOrElse {
-            createContainer(job)
-          }._1
-
-          newProxy.container.map(newContainer => {
-            logging.info(this, "about to initialize a running container for excessive concurrency...")
-            newContainer.initialize(job.action.containerInitializer, job.action.limits.timeout.duration).map { initInterval =>
-              logging.info(this, s"updating warm data for ${newProxy}  for excessive concurrency")
-              warmPool.put(newProxy, WarmedData(newContainer, job.msg.user.namespace, job.action, Instant.now))
-              initPool.remove(actionKey)
-            }
-          })
-          logging.info(this, s"returning new proxy ${newProxy}")
-        }
-        case Some(_) => {
-          logging.info(this, s"${currentWorst} exceeded max concurrency of ${maxConcurrency} for action ${action.name} in container ${worst.get.container}, already launching additional container(s) ")
-        }
-      }
     }
 
     available.orElse(nextBest)
 
   }
+
+  def key(action:ExecutableWhiskAction):String = action.namespace.toString + action.name.toString
+
+  def initAction(job:Run, worst:Option[MesosContainerProxy] = None, currentWorst:Option[Int] = None)(implicit transid:TransactionId):Option[(MesosContainerProxy, ContainerData)]={
+    val action = job.action
+    val actionKey:String = key(action)
+
+    //some hack based on https://stackoverflow.com/questions/35484913/how-to-get-truly-atomic-update-for-triemap-getorelseupdate
+    //(since TrieMap.getOrElseUpdate doesn't execute atomically)
+    val v = new LazyComp {
+      lazy val get = {
+        //compute something
+        if (!worst.isEmpty){
+          logging.warn(this, s"${currentWorst} exceeded max concurrency of ${maxConcurrency} for action ${action.name} in container ${worst.get.container.map(c => c.taskId)}, launching 1 more ")
+        }
+        //TODO: if container creation fails/timeout then return none
+        val newContainer = takePrewarmContainer(job.action).getOrElse {
+          createContainer(job)
+        }
+        newContainer._1.container.map(container => {
+          logging.info(this, "about to initialize a running container for excessive concurrency...")
+          container.initialize(job.action.containerInitializer, job.action.limits.timeout.duration).map { initInterval =>
+            logging.info(this, s"updating warm data for ${newContainer._1}  for excessive concurrency")
+            warmPool.put(newContainer._1, WarmedData(container, job.msg.user.namespace, job.action, Instant.now))
+            initPool.remove(actionKey)
+          }
+        })
+        newContainer
+      }
+    }
+    Some(initPool.putIfAbsent(actionKey, v).getOrElse(v).get)
+  }
+  trait LazyComp { val get: (MesosContainerProxy, ContainerData) }
 
 }

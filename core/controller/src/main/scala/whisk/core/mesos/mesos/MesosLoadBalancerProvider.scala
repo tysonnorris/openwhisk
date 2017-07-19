@@ -5,38 +5,21 @@ import java.util.UUID
 import akka.actor.ActorSystem
 import akka.pattern.ask
 import scaldi.Injector
-import whisk.common.Logging
-import whisk.common.TransactionId
+import whisk.common.{Logging, TransactionId}
 import whisk.core.WhiskConfig
 import whisk.core.connector.ActivationMessage
 import whisk.core.container.{ContainerPool => OldContainerPool}
-import whisk.core.containerpool.ActivationTracker
-import whisk.core.containerpool.PrewarmingConfig
-import whisk.core.containerpool.Run
-import whisk.core.entity.ByteSize
-import whisk.core.entity.CodeExecAsString
-import whisk.core.entity.ExecManifest
+import whisk.core.containerpool.{ActivationTracker, PrewarmingConfig, Run}
 import whisk.core.entity.ExecManifest.ImageName
-import whisk.core.entity.InstanceId
-import whisk.core.entity.WhiskAction
-import whisk.core.entity.WhiskActivation
+import whisk.core.entity.{ByteSize, CodeExecAsString, ExecManifest, InstanceId, WhiskAction, WhiskActivation}
 import whisk.core.entity.size._
-import whisk.core.entity.types.ActivationStore
-import whisk.core.entity.types.EntityStore
-import whisk.core.loadBalancer.LoadBalancer
-import whisk.core.loadBalancer.LoadBalancerProvider
-import whisk.core.mesos.MesosClientActor
-import whisk.core.mesos.MesosTask
-import whisk.core.mesos.Subscribe
-import whisk.core.mesos.Teardown
+import whisk.core.entity.types.{ActivationStore, EntityStore}
+import whisk.core.loadBalancer.{LoadBalancer, LoadBalancerProvider}
+import whisk.core.mesos.{MesosClientActor, MesosTask, Subscribe, Teardown}
 import whisk.spi.SpiFactoryModule
 
-import scala.concurrent.Await
-import scala.concurrent.Future
-import scala.concurrent.duration.FiniteDuration
-import scala.concurrent.duration._
-import scala.util.Failure
-import scala.util.Success
+import scala.concurrent.{Await, Future}
+import scala.concurrent.duration.{FiniteDuration, _}
 /**
   * Created by tnorris on 6/23/17.
   */
@@ -57,6 +40,7 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
   //init mesos framework:
 
   val mesosMaster = actorSystem.settings.config.getString("whisk.mesos.master-url")
+  val maxConcurrency = actorSystem.settings.config.getInt("whisk.mesos.max-concurrent")
   logging.info(this, s"subscribing to mesos master at ${mesosMaster}")
 
   implicit val mesosClientActor = actorSystem.actorOf(MesosClientActor.props(
@@ -116,11 +100,13 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
   /** Stores an activation in the database. */
   val store = (tid: TransactionId, activation: WhiskActivation) => {
     implicit val transid = tid
-    logging.info(this, "recording the activation result to the data store")
-    WhiskActivation.put(activationStore, activation).andThen {
-      case Success(id) => logging.info(this, s"recorded activation")
-      case Failure(t)  => logging.error(this, s"failed to record activation")
-    }
+    logging.info(this, "skipping activation storage...")
+    Future.successful(Unit)
+//    logging.info(this, "recording the activation result to the data store")
+//    WhiskActivation.put(activationStore, activation).andThen {
+//      case Success(id) => logging.info(this, s"recorded activation")
+//      case Failure(t)  => logging.error(this, s"failed to record activation")
+//    }
   }
 
   val prewarmKind = "nodejs:6"
@@ -134,7 +120,8 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
     store,
     OldContainerPool.getDefaultMaxActive(config),
     OldContainerPool.getDefaultMaxActive(config),
-    Some(PrewarmingConfig(2, prewarmExec, 256.MB)))
+    Some(PrewarmingConfig(2, prewarmExec, 256.MB)),
+    maxConcurrency)
 
   /**
     * Retrieves a per subject map of counts representing in-flight activations as seen by the load balancer
