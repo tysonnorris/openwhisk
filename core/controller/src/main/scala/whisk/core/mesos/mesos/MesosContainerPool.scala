@@ -262,64 +262,66 @@ class MesosContainerPool(childFactory: (TransactionId, String, ImageName, Boolea
   def schedule(job:Run, action: ExecutableWhiskAction, invocationNamespace: EntityName, idles: Map[MesosContainerProxy, ContainerData])(implicit transid:TransactionId): Option[(MesosContainerProxy, ContainerData)] = {
     //TODO: more intel: find the container with least amount of concurrently active activations
     //TODO: track currentActivations in a TrieMap locally here instead of in the proxy
-    idles.foreach {
-      case (p, c) => logging.info(this, s"       container ${p.container.map(c => c.taskId)} has  ${p.currentActivations} current activations")
-    }
+//    idles.foreach {
+//      case (p, c) => logging.info(this, s"existing container ${p.container.isCompleted}  has  ${p.currentActivations} concurrent activations")
+//    }
 
+    var nextBest:Option[(MesosContainerProxy,ContainerData)] = None
+    var worst:Option[MesosContainerProxy] = None
     val available = idles.find {
-      case (proxy, WarmedData(_, _, `action`, _)) if (proxy.currentActivations.get() < maxConcurrency) => {
-        true
+      case proxyVal@(proxy, WarmedData(_, _, `action`, _)) => {
+        val currentActivations = proxy.currentActivations.get()
+        if (currentActivations < maxConcurrency){
+          true
+        } else {
+          if (nextBest.isEmpty || nextBest.get._1.currentActivations.get() > currentActivations){
+            //logging.info(this, s"setting next best to ${currentActivations}")
+            nextBest = Some(proxyVal)
+          }
+          if (worst.isEmpty || worst.get.currentActivations.get() < currentActivations){
+            //logging.info(this, s"setting worst to ${currentActivations}")
+            worst = Some(proxy)
+          }
+          false
+        }
       }
       case _ => {
-      false
+        false
       }
     }
 
-    if (!available.isEmpty){
-      logging.info(this, s"found an available container for ${action.name}...")
-      available
-    } else {
-      idles.find {
-        case (proxy, WarmedData(_, _, `action`, _)) if (proxy.currentActivations.get() < maxConcurrency) => {
-          true
-        }
-        case (proxy, WarmedData(_, _, `action`, _)) => {
-          logging.info(this, s"using container ${proxy.container.map(c => c.taskId)}")
-          val currentActivations = proxy.currentActivations.get()
-          if (currentActivations < maxConcurrency) {
-            true
-          } else {
-            val actionKey = action.namespace.toString + action.name.toString
+    logging.info(this, s"any underused available? ${!available.isEmpty} nextBest:${nextBest}   worst:${worst}")
 
-            initPool.putIfAbsent(actionKey, action) match {
-              case None => {
-                logging.info(this, s"${currentActivations} exceeded max concurrency of ${maxConcurrency} for action ${action.name} in container ${proxy.container}, launching 1 more ")
-                //val newProxy = createContainer(job)._1
-                val newProxy = takePrewarmContainer(job.action).getOrElse {
-                  createContainer(job)
-                }._1
+    if (worst.isDefined && worst.get.currentActivations.get() > maxConcurrency) {
+      val currentWorst = worst.get.currentActivations.get()
+      val actionKey = action.namespace.toString + action.name.toString
 
-                newProxy.container.map (newContainer => {
-                  logging.info(this, "about to initialize a running container for excessive concurrency...")
-                  newContainer.initialize(job.action.containerInitializer, job.action.limits.timeout.duration).map { initInterval =>
-                    logging.info(this, s"updating warm data for ${newProxy}  for excessive concurrency")
-                    warmPool.put(newProxy, WarmedData(newContainer, job.msg.user.namespace, job.action, Instant.now))
-                    initPool.remove(actionKey)
-                  }
-                })
-                logging.info(this, s"returning new proxy ${newProxy}")
-              }
-              case Some(_) => {
-                logging.info(this, s"${currentActivations} exceeded max concurrency of ${maxConcurrency} for action ${action.name} in container ${proxy.container}, already launching additional container(s) ")
-              }
+      initPool.putIfAbsent(actionKey, action) match {
+        case None => {
+          logging.info(this, s"${currentWorst} exceeded max concurrency of ${maxConcurrency} for action ${action.name} in container ${worst.get.container}, launching 1 more ")
+          //val newProxy = createContainer(job)._1
+          val newProxy = takePrewarmContainer(job.action).getOrElse {
+            createContainer(job)
+          }._1
+
+          newProxy.container.map(newContainer => {
+            logging.info(this, "about to initialize a running container for excessive concurrency...")
+            newContainer.initialize(job.action.containerInitializer, job.action.limits.timeout.duration).map { initInterval =>
+              logging.info(this, s"updating warm data for ${newProxy}  for excessive concurrency")
+              warmPool.put(newProxy, WarmedData(newContainer, job.msg.user.namespace, job.action, Instant.now))
+              initPool.remove(actionKey)
             }
-
-            true
-          }
+          })
+          logging.info(this, s"returning new proxy ${newProxy}")
         }
-        case _ => false
+        case Some(_) => {
+          logging.info(this, s"${currentWorst} exceeded max concurrency of ${maxConcurrency} for action ${action.name} in container ${worst.get.container}, already launching additional container(s) ")
+        }
       }
     }
+
+    available.orElse(nextBest)
+
   }
 
 }
