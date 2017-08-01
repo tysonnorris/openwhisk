@@ -477,9 +477,14 @@ object MesosClient {
 
         //TODO: manage explicit and default roles, similar to https://github.com/mesos/kafka/pull/103/files
 
+        val hasSomePorts = offer.getResourcesList.asScala
+          .filter(res => res.getName == "ports").size > 0
+        if (!hasSomePorts) {
+          //TODO: log info about skipping due to lack of ports...
+        }
 
         val agentId = offer.getAgentId.getValue
-        if (acceptedOfferAgent == null || acceptedOfferAgent == agentId){
+        if (hasSomePorts && (acceptedOfferAgent == null || acceptedOfferAgent == agentId)){
           acceptedOfferAgent = agentId
           val resources = offer.getResourcesList.asScala
             .filter(_.getRole == role) //ignore resources with other roles
