@@ -99,6 +99,7 @@ object MesosTask {
     var portSeekIndex = 0
     val ranges = offer.getResourcesList.asScala
       .filter(res => res.getName == "ports").iterator.next().getRanges.getRangeList.asScala
+    require(ranges.size > 0, s"no available ports in resources for offer ${offer}")
     val rangesIt = ranges.iterator
     var rangeSeek = rangesIt.next()
     var nextPort = rangeSeek.getBegin

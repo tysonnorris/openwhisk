@@ -2,7 +2,7 @@ package whisk.core.mesos.mesos
 
 import java.util.UUID
 
-import akka.actor.ActorSystem
+import akka.actor.{ActorRefFactory, ActorSystem}
 import akka.pattern.ask
 import scaldi.Injector
 import whisk.common.{Logging, TransactionId}
@@ -11,15 +11,15 @@ import whisk.core.connector.ActivationMessage
 import whisk.core.container.{ContainerPool => OldContainerPool}
 import whisk.core.containerpool.{ActivationTracker, PrewarmingConfig, Run}
 import whisk.core.entity.ExecManifest.ImageName
-import whisk.core.entity.{ByteSize, CodeExecAsString, ExecManifest, InstanceId, WhiskAction, WhiskActivation}
 import whisk.core.entity.size._
 import whisk.core.entity.types.{ActivationStore, EntityStore}
+import whisk.core.entity.{ByteSize, CodeExecAsString, ExecManifest, InstanceId, WhiskAction, WhiskActivation}
 import whisk.core.loadBalancer.{LoadBalancer, LoadBalancerProvider}
 import whisk.core.mesos.{MesosClientActor, MesosTask, Subscribe, Teardown}
 import whisk.spi.SpiFactoryModule
 
-import scala.concurrent.{Await, Future}
 import scala.concurrent.duration.{FiniteDuration, _}
+import scala.concurrent.{Await, Future}
 /**
   * Created by tnorris on 6/23/17.
   */
@@ -79,7 +79,7 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
       image = image,
       userProvidedImage = userProvidedImage,
       memory = memory,
-      cpuShares = OldContainerPool.cpuShare(config),
+      cpuShares = 0,//OldContainerPool.cpuShare(config),
       environment = Map("__OW_API_HOST" -> config.wskApiHost),
       network = config.invokerContainerNetwork,
       dnsServers = config.invokerContainerDns,
@@ -114,13 +114,22 @@ class MesosLoadBalancer(config:WhiskConfig, activationStore:ActivationStore)(imp
     new CodeExecAsString(manifest, "", None)
   }.get
 
+  /** Creates a ContainerProxy Actor when being called. */
+  val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerLifecycleProxy.props(containerFactory, ack, store, 30.seconds))
 
+
+
+
+
+  val cManagerClient = actorSystem.actorOf(ContainerManager.props(
+    childFactory,
+    Some(PrewarmingConfig(2, prewarmExec, 256.MB))))
   val pool = new MesosContainerPool(
-    containerFactory,
+    actorSystem,
+    cManagerClient,
     store,
     OldContainerPool.getDefaultMaxActive(config),
     OldContainerPool.getDefaultMaxActive(config),
-    Some(PrewarmingConfig(2, prewarmExec, 256.MB)),
     maxConcurrency)
 
   /**
