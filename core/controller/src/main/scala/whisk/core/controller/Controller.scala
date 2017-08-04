@@ -44,6 +44,9 @@ import whisk.core.loadBalancer.LoadBalancerService
 import whisk.http.BasicHttpService
 import whisk.http.BasicRasService
 import scala.util.{Failure, Success}
+import spray.http.StatusCodes
+import whisk.core.loadBalancer.LoadBalancerProvider
+import whisk.spi.SpiLoader
 
 
 /**
@@ -117,7 +120,8 @@ class Controller(
     private implicit val activationStore = WhiskActivationStore.datastore(whiskConfig)
 
     // initialize backend services
-    private implicit val loadBalancer = new LoadBalancerService(whiskConfig, instance, entityStore)
+    //private implicit val loadBalancer = new LoadBalancerService(whiskConfig, instance, entityStore)
+    private implicit val loadBalancer = SpiLoader.get[LoadBalancerProvider]().getLoadBalancer(whiskConfig, instance, entityStore, activationStore)
     private implicit val entitlementProvider = new LocalEntitlementProvider(whiskConfig, loadBalancer)
     private implicit val activationIdFactory = new ActivationIdGenerator {}
 
@@ -137,9 +141,10 @@ class Controller(
     private val internalInvokerHealth = {
         (path("invokers") & get) {
             complete {
-                loadBalancer.allInvokers.map(_.map {
-                    case (instance, state) => s"invoker${instance.toInt}" -> state.asString
-                }.toMap.toJson.asJsObject)
+                StatusCodes.NotFound
+//                loadBalancer.allInvokers.map(_.map {
+//                    case (instance, state) => s"invoker${instance.toInt}" -> state.asString
+//                }.toMap.toJson.asJsObject)
             }
         }
     }

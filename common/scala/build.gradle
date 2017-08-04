@@ -34,6 +34,13 @@ dependencies {
     compile 'org.apache.httpcomponents:httpclient:4.4.1'
     compile 'com.github.ben-manes.caffeine:caffeine:2.4.0'
     compile 'com.google.code.findbugs:jsr305:3.0.2'
+
+    //for mesos
+    compile "org.apache.mesos:mesos:1.2.1"
+    //for recordIO
+    compile "com.lightbend.akka:akka-stream-alpakka-simple-codecs_2.11:0.9"
+    //for JSON printing of protobuf
+    compile "com.google.protobuf:protobuf-java-util:3.3.1"
 }
 
 tasks.withType(ScalaCompile) {

@@ -34,7 +34,10 @@ protected[core] object ExecManifest {
     /**
      * Required properties to initialize this singleton via WhiskConfig.
      */
-    protected[core] def requiredProperties = Map(WhiskConfig.runtimesManifest -> null)
+    protected[core] def requiredProperties = Map(WhiskConfig.runtimesManifest -> null,
+        WhiskConfig.dockerRegistry -> "",
+        WhiskConfig.dockerImagePrefix -> "",
+        WhiskConfig.dockerImageTag -> "latest")
 
     /**
      * Reads runtimes manifest from WhiskConfig and initializes the
