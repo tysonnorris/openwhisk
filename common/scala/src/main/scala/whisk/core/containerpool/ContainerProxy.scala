@@ -15,13 +15,12 @@
  * limitations under the License.
  */
 
-package whisk.core.mesos
+package whisk.core.containerpool
 
 import spray.json.DefaultJsonProtocol._
 import spray.json._
 import whisk.common.Counter
 import whisk.core.connector.ActivationMessage
-import whisk.core.container.Interval
 import whisk.core.entity._
 case class Run(action: ExecutableWhiskAction, msg: ActivationMessage)
 object ContainerProxy {

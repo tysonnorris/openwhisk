@@ -24,7 +24,7 @@ import whisk.core.entity.ActivationResponse._
 /**
  * This object contains type definitions that are useful when observing and timing container operations.
  */
-package object container {
+package object containerpool {
 
 
     /**

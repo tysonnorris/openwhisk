@@ -15,14 +15,12 @@
  * limitations under the License.
  */
 
-package whisk.core.mesos
+package whisk.core.containerpool
 
 import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
-
 import spray.json.JsObject
 import whisk.common.TransactionId
-import whisk.core.container.Interval
 import whisk.core.entity.ActivationResponse
 import whisk.core.entity.ByteSize
 
@@ -31,7 +29,18 @@ import whisk.core.entity.ByteSize
  * for different container providers, but the implementation also needs to include
  * OpenWhisk specific behavior, especially for initialize and run.
  */
+
+case class ContainerId(val asString: String) {
+    require(asString.nonEmpty, "ContainerId must not be empty")
+}
+case class ContainerIp(val asString: String, val port:Int = 8080) {
+    require(asString.nonEmpty, "ContainerIp must not be empty")
+}
+
 trait Container {
+    val containerId:ContainerId
+    val containerIp:ContainerIp
+
     /** Stops the container from consuming CPU cycles. */
     def suspend()(implicit transid: TransactionId): Future[Unit]
 

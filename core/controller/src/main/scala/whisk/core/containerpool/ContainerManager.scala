@@ -1,4 +1,4 @@
-package whisk.core.mesos
+package whisk.core.containerpool
 
 import akka.actor.Actor
 import akka.actor.ActorRef
@@ -10,11 +10,12 @@ import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.duration._
 import whisk.common.AkkaLogging
 import whisk.common.Logging
-import whisk.core.entity.size._
 import whisk.core.entity.ByteSize
 import whisk.core.entity.CodeExec
 import whisk.core.entity.EntityName
 import whisk.core.entity.ExecutableWhiskAction
+import whisk.core.entity.size._
+
 
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more

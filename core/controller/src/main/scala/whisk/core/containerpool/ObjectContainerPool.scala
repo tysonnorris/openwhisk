@@ -1,4 +1,4 @@
-package whisk.core.mesos
+package whisk.core.containerpool
 
 import akka.actor.Actor
 import akka.actor.ActorRef
@@ -8,28 +8,28 @@ import java.time.Instant
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.concurrent.TrieMap
 import scala.collection.mutable
-import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.Promise
+import scala.concurrent.duration._
 import scala.util.Success
 import spray.json.DefaultJsonProtocol._
 import spray.json.JsObject
 import spray.json._
 import whisk.common.Logging
 import whisk.common.TransactionId
-import whisk.core.container.Interval
 import whisk.core.entity.ActivationId
 import whisk.core.entity.ActivationResponse
 import whisk.core.entity.EntityName
 import whisk.core.entity.ExecutableWhiskAction
 import whisk.core.entity.WhiskActivation
+import whisk.core.mesos.MesosTask
 import whisk.http.Messages
 
 /**
   * Created by tnorris on 6/28/17.
   */
-class MesosContainerPool(system:ActorSystem,
+class ObjectContainerPool(system:ActorSystem,
                          cManager:ActorRef,
                          storeActivation: (TransactionId, WhiskActivation) => Future[Any],
                          maxConcurrency:Int = 200

@@ -12,6 +12,12 @@ import whisk.common.Logging
 import whisk.common.TransactionId
 import whisk.core.WhiskConfig
 import whisk.core.connector.ActivationMessage
+import whisk.core.containerpool.ActivationTracker
+import whisk.core.containerpool.ContainerLifecycleProxy
+import whisk.core.containerpool.ContainerManager
+import whisk.core.containerpool.ObjectContainerPool
+import whisk.core.containerpool.PrewarmingConfig
+import whisk.core.containerpool.Run
 import whisk.core.entity.ActivationId
 import whisk.core.entity.ByteSize
 import whisk.core.entity.CodeExecAsString
@@ -139,7 +145,7 @@ class MesosLoadBalancer(config: WhiskConfig, activationStore: ActivationStore)(i
     val cManagerClient = actorSystem.actorOf(ContainerManager.props(
         childFactory,
         Some(PrewarmingConfig(2, prewarmExec, 256.MB))))
-    val pool = new MesosContainerPool(
+    val pool = new ObjectContainerPool(
         actorSystem,
         cManagerClient,
         store,

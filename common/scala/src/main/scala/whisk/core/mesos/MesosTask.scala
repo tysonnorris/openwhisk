@@ -1,7 +1,6 @@
 package whisk.core.mesos
 
 import java.time.Instant
-
 import akka.actor.{ActorRef, ActorRefFactory, ActorSystem}
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.client.RequestBuilding.Post
@@ -20,11 +19,15 @@ import org.apache.mesos.v1.Protos.{CommandInfo, ContainerInfo, HealthCheck, Offe
 import spray.json.DefaultJsonProtocol._
 import spray.json.{JsObject, _}
 import whisk.core.entity.ActivationResponse.ConnectionError
-
 import scala.concurrent.Promise
+import whisk.core.containerpool.Container
+import whisk.core.containerpool.ContainerId
+import whisk.core.containerpool.ContainerIp
+import whisk.core.containerpool.InitializationError
+import whisk.core.containerpool.Interval
+import whisk.core.containerpool.RunResult
 //import spray.http.HttpRequest
 import whisk.common.{Counter, Logging, LoggingMarkers, TransactionId}
-import whisk.core.container.{Interval, RunResult}
 import whisk.core.entity.ActivationResponse.ContainerResponse
 import whisk.core.entity.size._
 import whisk.core.entity.{ActivationResponse, ByteSize}
@@ -180,7 +183,7 @@ object MesosTask {
 object JsonFormatters extends DefaultJsonProtocol{
   implicit val createContainerJson = jsonFormat3(CreateContainer)
 }
-class MesosTask(id: ContainerId, ip: ContainerIp, val taskId: String, mesosClientActor: ActorRef)(
+class MesosTask(val containerId: ContainerId, val containerIp: ContainerIp, val taskId: String, mesosClientActor: ActorRef)(
   implicit ec: ExecutionContext, logger: Logging, as:ActorSystem) extends Container {// with ActionLogDriver {//extends DockerContainer(id, ip) {
   implicit val materializer = ActorMaterializer()
 
@@ -209,7 +212,7 @@ class MesosTask(id: ContainerId, ip: ContainerIp, val taskId: String, mesosClien
   }
 
   def initialize(initializer: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[Interval] = {
-    val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_INIT, s"sending initialization to $id $ip")
+    val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_INIT, s"sending initialization to $containerId $containerIp")
 
     val body = JsObject("value" -> initializer)
     callContainer("/init", body, timeout, retry = true).andThen { // never fails
@@ -230,7 +233,7 @@ class MesosTask(id: ContainerId, ip: ContainerIp, val taskId: String, mesosClien
 
   def run(parameters: JsObject, environment: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[(Interval, ActivationResponse)] = {
     val actionName = environment.fields.get("action_name").map(_.convertTo[String]).getOrElse("")
-    val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_RUN, s"sending arguments to $actionName at $id $ip")
+    val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_RUN, s"sending arguments to $actionName at $containerId $containerIp")
 
     val parameterWrapper = JsObject("value" -> parameters)
     val body = JsObject(parameterWrapper.fields ++ environment.fields)
@@ -262,7 +265,7 @@ class MesosTask(id: ContainerId, ip: ContainerIp, val taskId: String, mesosClien
 
   //based on http://doc.akka.io/docs/akka-http/10.0.6/scala/http/client-side/host-level.html
   val maxPendingRequests = 500
-  val poolClientFlow = Http().cachedHostConnectionPool[Promise[HttpResponse]](host = ip.asString, port = ip.port)
+  val poolClientFlow = Http().cachedHostConnectionPool[Promise[HttpResponse]](host = containerIp.asString, port = containerIp.port)
   val queue =
     Source.queue[(HttpRequest, Promise[HttpResponse])](maxPendingRequests, OverflowStrategy.backpressure)
       .via(poolClientFlow)

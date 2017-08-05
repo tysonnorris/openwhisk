@@ -15,12 +15,12 @@
  * limitations under the License.
  */
 
-package whisk.core.mesos
+package whisk.core.containerpool
 
-import akka.actor.Status.{Failure => FailureMessage}
 import akka.actor.FSM
 import akka.actor.Props
 import akka.actor.Stash
+import akka.actor.Status.{Failure => FailureMessage}
 import akka.pattern.pipe
 import java.time.Instant
 import scala.concurrent.Future
@@ -33,6 +33,7 @@ import whisk.common.TransactionId
 import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity._
 import whisk.core.entity.size._
+import whisk.core.mesos.MesosTask
 
 // States
 sealed trait ContainerState

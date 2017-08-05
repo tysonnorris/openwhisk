@@ -1,4 +1,4 @@
-package whisk.core.mesos
+package whisk.core.containerpool
 
 import akka.actor.ActorRef
 

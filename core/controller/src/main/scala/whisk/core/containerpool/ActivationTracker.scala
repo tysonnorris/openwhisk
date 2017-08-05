@@ -1,19 +1,17 @@
-package whisk.core.mesos
-
-import java.time.Clock
-import java.time.Instant
+package whisk.core.containerpool
 
 import akka.actor.ActorSystem
-import whisk.common.Logging
-import whisk.common.TransactionId
-import whisk.core.entity.ActivationId
-import whisk.core.entity.WhiskActivation
-
+import java.time.Clock
+import java.time.Instant
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Promise
 import scala.concurrent.TimeoutException
 import scala.concurrent.duration.FiniteDuration
+import whisk.common.Logging
+import whisk.common.TransactionId
+import whisk.core.entity.ActivationId
+import whisk.core.entity.WhiskActivation
 
 /**
   * Created by tnorris on 6/25/17.
