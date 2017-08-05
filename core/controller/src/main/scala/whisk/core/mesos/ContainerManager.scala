@@ -6,7 +6,6 @@ import akka.actor.ActorRefFactory
 import akka.actor.Props
 import java.util.concurrent.atomic.AtomicLong
 import scala.collection.mutable
-import scala.concurrent.Promise
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.duration._
 import whisk.common.AkkaLogging
@@ -57,8 +56,6 @@ class ContainerManager(childFactory: ActorRefFactory => ActorRef,
   implicit val logging = new AkkaLogging(context.system.log)
   implicit val ec = context.system.dispatcher
   val prewarmedPool = mutable.Map[ActorRef, PreWarmedData]()
-//  val actorContainers = mutable.Map[ActorRef, MesosContainerProxy]()
-//  val containerPromises = mutable.Map[String, Promise[Option[(MesosContainerProxy, ContainerData)]]]()
 
   val flaggedForRemoval = mutable.ListBuffer[MesosContainerProxy]()
   val subscribers = mutable.ListBuffer[ActorRef]()
@@ -235,7 +232,7 @@ class ContainerManager(childFactory: ActorRefFactory => ActorRef,
 
 
   //TODO: launch enough actions to support the configured request density for this action
-  def launchContainersForAction(action: ExecutableWhiskAction, maxConcurrency:Int, invocationNamespace: Option[EntityName], idles: Map[MesosContainerProxy, ContainerData], promise:Promise[Option[(MesosContainerProxy, ContainerData)]]): Option[(ActorRef, ContainerData)] ={
+  def launchContainersForAction(action: ExecutableWhiskAction, maxConcurrency:Int, invocationNamespace: Option[EntityName], idles: Map[MesosContainerProxy, ContainerData]): Option[(ActorRef, ContainerData)] ={
     val allActive = idles.find {
       case (_, WarmedData(_, `action`, _)) => true
       case _ => false

@@ -6,6 +6,8 @@ import akka.pattern.ask
 import scala.concurrent.Await
 import scala.concurrent.Future
 import scala.concurrent.duration._
+import scala.util.Failure
+import scala.util.Success
 import whisk.common.Logging
 import whisk.common.TransactionId
 import whisk.core.WhiskConfig
@@ -109,13 +111,14 @@ class MesosLoadBalancer(config: WhiskConfig, activationStore: ActivationStore)(i
     /** Stores an activation in the database. */
     val store = (tid: TransactionId, activation: WhiskActivation) => {
         implicit val transid = tid
-        logging.info(this, "skipping activation storage...")
-        Future.successful(Unit)
-        //    logging.info(this, "recording the activation result to the data store")
-        //    WhiskActivation.put(activationStore, activation).andThen {
-        //      case Success(id) => logging.info(this, s"recorded activation")
-        //      case Failure(t)  => logging.error(this, s"failed to record activation")
-        //    }
+        //TODO: SPI for store behavior, so that delayed/decoupled storage is an option
+//        logging.info(this, "skipping activation storage...")
+//        Future.successful(Unit)
+            logging.info(this, "recording the activation result to the data store")
+            WhiskActivation.put(activationStore, activation).andThen {
+              case Success(id) => logging.info(this, s"recorded activation")
+              case Failure(t)  => logging.error(this, s"failed to record activation")
+            }
     }
 
     val prewarmKind = "nodejs:6"
