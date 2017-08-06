@@ -36,18 +36,20 @@ import whisk.core.entity.size._
 
 //incoming messages - from MesosContainerPool
 case class GetContainer(client:ActorRef, action:ExecutableWhiskAction, maxConcurrent:Int = 1, knownTaskIds:Seq[String])
-case class ReportUsage(client:ActorRef, proxy:MesosContainerProxy, currentActivations:Int)
+case class ReportUsage(client:ActorRef, container:WarmContainer, currentActivations:Int)
 
 
 //outgoing messages - to MesosContainerPool
-case class ClientNeedWork(mesosContainerProxy: MesosContainerProxy)
-case class ClientNotifyRemoval(mesosContainerProxy: MesosContainerProxy)
+case class ClientNeedWork(container: WarmContainer)
+case class ClientNotifyRemoval(container: WarmContainer)
 
 //internal messages from garbage collection
 case class MarkUnused()
 case class RemoveUnused()
 
 case class PrewarmingConfig(count: Int, exec: CodeExec[_], memoryLimit: ByteSize)
+
+case class WarmContainer(data:WarmedData, containerLifecycleProxy: ActorRef)
 
 class ContainerManager(childFactory: ActorRefFactory => ActorRef,
                        prewarmConfig: Option[PrewarmingConfig] = None
@@ -58,11 +60,11 @@ class ContainerManager(childFactory: ActorRefFactory => ActorRef,
   implicit val ec = context.system.dispatcher
   val prewarmedPool = mutable.Map[ActorRef, PreWarmedData]()
 
-  val flaggedForRemoval = mutable.ListBuffer[MesosContainerProxy]()
+  val flaggedForRemoval = mutable.ListBuffer[WarmContainer]()
   val subscribers = mutable.ListBuffer[ActorRef]()
 
-  val clusterWarmPool = mutable.Map[MesosContainerProxy, (WarmedData, AtomicLong)]()
-  val stats = mutable.Map[MesosContainerProxy, mutable.Map[ActorRef, Long]]()
+  val clusterWarmPool = mutable.Map[WarmContainer, AtomicLong]()
+  val stats = mutable.Map[WarmContainer, mutable.Map[ActorRef, Long]]()
 
   prewarmConfig.foreach { config =>
     logging.info(this, s"pre-warming ${config.count} ${config.exec.kind} containers")
@@ -123,19 +125,19 @@ class ContainerManager(childFactory: ActorRefFactory => ActorRef,
     }
 
     case NeedWork(data, action) => {
-      val proxy = new MesosContainerProxy(data, sender())
+//      val proxy = new MesosContainerProxy(data, sender())
 //      actorContainers.put(sender(), proxy)
-      logging.info(this, s"NeedWork for container ${proxy.data.container.taskId}")
-
-      clusterWarmPool.put(proxy, (data, new AtomicLong(0)))
-      subscribers.foreach( s => s ! ClientNeedWork(proxy))
+      logging.info(this, s"NeedWork for container ${data.container.containerId}")
+      val warmContainer = WarmContainer(data, sender())
+      clusterWarmPool.put(warmContainer, new AtomicLong(0))
+      subscribers.foreach( s => s ! ClientNeedWork(warmContainer))
 
     }
 
-    case ReportUsage(client:ActorRef, proxy, currentActivations) => {
+    case ReportUsage(client:ActorRef, warmContainer, currentActivations) => {
       require(currentActivations >= 0, s"usage reported cannot be less than 0: ${currentActivations}")
-      logging.info(this, s"received usage data for ${proxy.data.action.fullyQualifiedName(true)} with ${currentActivations} activations")
-      stats.getOrElseUpdate(proxy, mutable.Map()).update(client, currentActivations)
+      logging.info(this, s"received usage data for ${warmContainer.data.action.fullyQualifiedName(true)} with ${currentActivations} activations")
+      stats.getOrElseUpdate(warmContainer, mutable.Map()).update(client, currentActivations)
 
       stats.foreach(p => {
         p._2.foreach(a => {
@@ -143,8 +145,8 @@ class ContainerManager(childFactory: ActorRefFactory => ActorRef,
         })
       })
       //in case this is marked for removal, unmark it
-      if (currentActivations > 0 && flaggedForRemoval.contains(proxy)){
-        flaggedForRemoval -= proxy
+      if (currentActivations > 0 && flaggedForRemoval.contains(warmContainer)){
+        flaggedForRemoval -= warmContainer
       }
     }
 
@@ -153,20 +155,14 @@ class ContainerManager(childFactory: ActorRefFactory => ActorRef,
       prewarmedPool.update(sender(), data)
     }
 
-    case ContainerRemoved => {
+    case ContainerRemoved(data) => {
       logging.info(this, "container removed...")
       //TODO: remove via predicate?
       clusterWarmPool.foreach (p => {
-        if (p._1.actor == sender()){
+        if (p._1.containerLifecycleProxy == sender()){
           clusterWarmPool.remove(p._1)
         }
       })
-
-//      actorContainers.get(sender()) match {
-//        case Some(proxy) => clusterWarmPool.remove(proxy)
-//        case None => logging.warn(this, "removing container that was not in warmPool...")
-//      }
-
     }
 
     case MarkUnused => {
@@ -175,7 +171,7 @@ class ContainerManager(childFactory: ActorRefFactory => ActorRef,
         val proxyUsageTotal = p._2.foldLeft(0l)((sum, next) => sum + next._2)
         logging.info(this, s"MarkUnused: usage for ${p._1.data.action.fullyQualifiedName(true)} is ${proxyUsageTotal}")
         if (proxyUsageTotal == 0 && !flaggedForRemoval.contains(p._1)){
-          logging.info(this, s"marking ${p._1.taskId} for removal")
+          logging.info(this, s"marking ${p._1.data.container.containerId} for removal")
           flaggedForRemoval += p._1
           clusterWarmPool.remove(p._1)
           subscribers.foreach( s => s ! ClientNotifyRemoval(p._1))
@@ -188,10 +184,10 @@ class ContainerManager(childFactory: ActorRefFactory => ActorRef,
         val proxyUsageTotal = stats(p).foldLeft(0l)((sum, next) => sum + next._2)
         logging.info(this, s"RemoveUnused: usage for ${p.data.action.fullyQualifiedName(true)} is ${proxyUsageTotal}")
         if (proxyUsageTotal == 0){
-          logging.warn(this, s"requesting removal of ${p.taskId}")
-          p.actor ! Remove
+          logging.warn(this, s"requesting removal of ${p.data.container.containerId}")
+          p.containerLifecycleProxy ! Remove
         } else {
-          logging.info(this, s"found active usage of ${p.taskId}, won't remove for now.")
+          logging.info(this, s"found active usage of ${p.data.container.containerId}, won't remove for now.")
         }
         flaggedForRemoval -= p
         stats.remove(p)
@@ -233,9 +229,9 @@ class ContainerManager(childFactory: ActorRefFactory => ActorRef,
 
 
   //TODO: launch enough actions to support the configured request density for this action
-  def launchContainersForAction(action: ExecutableWhiskAction, maxConcurrency:Int, invocationNamespace: Option[EntityName], idles: Map[MesosContainerProxy, ContainerData]): Option[(ActorRef, ContainerData)] ={
-    val allActive = idles.find {
-      case (_, WarmedData(_, `action`, _)) => true
+  def launchContainersForAction(action: ExecutableWhiskAction, maxConcurrency:Int, invocationNamespace: Option[EntityName], allActive: Map[WarmContainer, AtomicLong]): Option[(ActorRef, ContainerData)] ={
+    val activeForAction = allActive.find {
+      case (WarmContainer(WarmedData(_, `action`, _),_),_) => true
       case _ => false
 
     }
@@ -274,15 +270,11 @@ object ContainerManager {
             unusedTimeout: FiniteDuration = 10.minutes,
             pauseGrace: FiniteDuration = 50.milliseconds) = Props(new ContainerManager(factory, prewarmConfig))
 
-  def schedule(action: ExecutableWhiskAction, maxConcurrency:Int, invocationNamespace: Option[EntityName], idles: Map[MesosContainerProxy, (WarmedData, AtomicLong)], knownTaskIds:Seq[String])(implicit logging:Logging): Option[(MesosContainerProxy, (WarmedData, AtomicLong))] = {
+  def schedule(action: ExecutableWhiskAction, maxConcurrency:Int, invocationNamespace: Option[EntityName], idles: Map[WarmContainer, AtomicLong], knownTaskIds:Seq[String])(implicit logging:Logging): Option[(WarmContainer, AtomicLong)] = {
     idles.find {
-      case (p, (WarmedData(_, `action`, _), currentActivations) )
-        if !knownTaskIds.contains(p.data.container.taskId) && currentActivations.get() <= maxConcurrency => {
-        true
-      }
-      case _ => {
-        false
-      }
+      case (WarmContainer(WarmedData(container, `action`, _),_), currentActivations)
+        if !knownTaskIds.contains(container.containerId) && currentActivations.get() <= maxConcurrency => true
+      case _ => false
     }
   }
 

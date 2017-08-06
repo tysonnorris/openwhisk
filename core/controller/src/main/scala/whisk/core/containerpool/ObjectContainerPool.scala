@@ -23,7 +23,6 @@ import whisk.core.entity.ActivationResponse
 import whisk.core.entity.EntityName
 import whisk.core.entity.ExecutableWhiskAction
 import whisk.core.entity.WhiskActivation
-import whisk.core.mesos.MesosTask
 import whisk.http.Messages
 
 /**
@@ -35,22 +34,22 @@ class ObjectContainerPool(system:ActorSystem,
                          maxConcurrency:Int = 200
                         )(implicit val logging:Logging, val ec:ExecutionContext) {
 
-  val containerPromises = new TrieMap[String, Promise[Option[(MesosContainerProxy, ContainerData)]]]()
-  val warmPool = mutable.Map[MesosContainerProxy, (WarmedData, AtomicInteger)]()
+  val containerPromises = new TrieMap[String, Promise[Option[WarmContainer]]]()
+  val warmPool = mutable.Map[WarmContainer, AtomicInteger]()
 
 
   val cMgrClient:ActorRef = system.actorOf(Props(new Actor {
     override def receive: Receive = {
-      case ClientNeedWork(proxy) => {
+      case ClientNeedWork(warmContainer) => {
 
-        val actionKey:String = proxy.data.action.fullyQualifiedName(true).toString
-        val updated = warmPool.put(proxy, (proxy.data, new AtomicInteger(0)))
-        logging.info(this, s"received a container ${proxy.data.container.taskId} updated ${updated}")
+        val actionKey:String = warmContainer.data.action.fullyQualifiedName(true).toString
+        val updated = warmPool.put(warmContainer, new AtomicInteger(0))
+        logging.info(this, s"received a container ${warmContainer.data.container.containerId} updated ${updated}")
         //cleanup the promise map when it completes (completes AFTER the container is added to the warmPool)
         containerPromises.remove(actionKey) match {
           case Some(p) =>
             logging.info(this, s"removed promise for ${actionKey}")
-            p.success(Some((proxy, proxy.data)))
+            p.success(Some(warmContainer))
           case None => logging.info(this, "no promise found after container startup")
         }
 
@@ -58,11 +57,11 @@ class ObjectContainerPool(system:ActorSystem,
       case ClientNotifyRemoval(proxy) => {
         logging.info(this, s"notified of a container removal ${proxy.data.container.taskId}")
         warmPool.get(proxy) match {
-          case Some(p) => if (p._2.get() == 0){
+          case Some(p) => if (p.get() == 0){
             warmPool.remove(proxy)
             } else {
               //preemptively report usage to unmark this from removal
-              cManager ! ReportUsage(cMgrClient, proxy, p._2.get())
+              cManager ! ReportUsage(cMgrClient, proxy, p.get())
             }
           case None =>
             logging.info(this, s"removal of unknown container ${proxy.data.container.taskId}")
@@ -73,7 +72,7 @@ class ObjectContainerPool(system:ActorSystem,
   }))
   system.scheduler.schedule(30.seconds, 30.seconds) {
     warmPool.foreach(p => {
-      cManager ! ReportUsage(cMgrClient, p._1, p._2._2.get())
+      cManager ! ReportUsage(cMgrClient, p._1, p._2.get())
 
     })
   }
@@ -95,27 +94,19 @@ class ObjectContainerPool(system:ActorSystem,
     }
     container match {
       case Some((actor, data)) =>
-//        warmPool.update(actor, data)
-        logging.info(this, s"running from existing warmpool container ${actor.data.container.taskId}")
-        run(actor, data._1, job)(job.msg.transid).map(a => {
-          val either = Future.successful(Future.successful(Right(a)))
-          return either
-        })
+        logging.info(this, s"running from existing warmpool container ${actor.data.container.containerId}")
+        Future.successful(run(actor, job)(job.msg.transid))
       case None =>
         val newContainer = initActionIdempotent(job)
         newContainer.flatMap(c => {
           c match {
-            case Some((actor,data)) =>
-//              warmPool.update(actor, data)
-              logging.info(this, s"running from new warmpool container ${actor.data.container.taskId}")
-              run(actor, data, job)(job.msg.transid).map(a => {
-                val either = Future.successful(Future.successful(Right(a)))
-                return either
-              })
+            case Some(warmContainer) =>
+              logging.info(this, s"running from new warmpool container ${warmContainer.data.container.taskId}")
+              Future.successful(run(warmContainer, job)(job.msg.transid))
             case None =>
               //TODO: some backoff retry?
-              Future.failed(new Exception("could not start container in the mesos cluster..."))
-
+              //outer future (posting) is successful, but inner (processing) is failed)
+              Future.successful(Future.failed(new Exception("could not start container in the mesos cluster...")))
           }
         })
     }
@@ -131,16 +122,16 @@ class ObjectContainerPool(system:ActorSystem,
     * 3. indicating the resource is free to the parent pool,
     * 4. recording the result to the data store
     *
-    * @param containerProxy the container to run the job on
+    * @param warmContainer the container to run the job on
     * @param job the job to run
     * @return a future completing after logs have been collected and
     *         added to the WhiskActivation
     */
-  def run(containerProxy: MesosContainerProxy, containerData:ContainerData, job: Run)(implicit tid: TransactionId): Future[WhiskActivation] = {
+  def run(warmContainer: WarmContainer, job: Run)(implicit tid: TransactionId): Future[Either[ActivationId, WhiskActivation]] = {
     val actionTimeout = job.action.limits.timeout.duration
-    val container = containerProxy.data.container
+    //val container = containerProxy.data.container
     val initInterval = Interval.zero
-    val activation: Future[WhiskActivation] = {
+    val activation:Future[Either[ActivationId, WhiskActivation]]  = {
         val parameters = job.msg.content getOrElse JsObject()
 
         val environment = JsObject(
@@ -152,26 +143,26 @@ class ObjectContainerPool(system:ActorSystem,
           // but potentially under-estimates actual deadline
           "deadline" -> (Instant.now.toEpochMilli + actionTimeout.toMillis).toString.toJson)
 
-        val currentActivations = warmPool.get(containerProxy).get._2.getAndIncrement()
+        val currentActivations = warmPool.get(warmContainer).get.getAndIncrement()
 
-        logging.info(this, s"starting run on task ${container.taskId} with ${currentActivations} existing in-flight activations")
+        logging.info(this, s"starting run on task ${warmContainer.data.container.containerId} with ${currentActivations} existing in-flight activations")
 
-        container.run(parameters, environment, actionTimeout)(job.msg.transid).map {
+      warmContainer.data.container.run(parameters, environment, actionTimeout)(job.msg.transid).map {
           case (runInterval, response) =>
-            completeConcurrentRun(containerProxy, container)
+            completeConcurrentRun(warmContainer)
             val initRunInterval = Interval(runInterval.start.minusMillis(initInterval.duration.toMillis), runInterval.end)
-            ContainerProxy.constructWhiskActivation(job, initRunInterval, response)
+            Right(ContainerProxy.constructWhiskActivation(job, initRunInterval, response))
         }
       }.recover {
         case InitializationError(interval, response) =>
-          completeConcurrentRun(containerProxy, container)
-          ContainerProxy.constructWhiskActivation(job, interval, response)
+          completeConcurrentRun(warmContainer)
+          Right(ContainerProxy.constructWhiskActivation(job, interval, response))
         case t =>
           // Actually, this should never happen - but we want t o make sure to not miss a problem
           logging.error(this, s"caught unexpected error while running activation: ${t}")
-          completeConcurrentRun(containerProxy, container)
-          ContainerProxy.constructWhiskActivation(job, Interval.zero, ActivationResponse.whiskError(Messages.abnormalRun))
-      }
+          completeConcurrentRun(warmContainer)
+          Right(ContainerProxy.constructWhiskActivation(job, Interval.zero, ActivationResponse.whiskError(Messages.abnormalRun)))
+      } //TODO: activeAck from ObjectContainerPool?
       //    activation.andThen {
       //      // the activation future will always complete with Success
       //      case Success(ack) => sendActiveAck(tid, ack, job.msg.rootControllerIndex)
@@ -181,34 +172,29 @@ class ObjectContainerPool(system:ActorSystem,
   //            activation.withLogs(ActivationLogs(logs.toVector))
   //          }
   //        }.andThen {
-            case Success(activation) => storeActivation(tid, activation)
+            case Success(activation) => storeActivation(tid, activation.right.get)
           }.flatMap { activation =>
             //self ! ActivationCompleted
 
             // Fail the future iff the activation was unsuccessful to facilitate
             // better cleanup logic.
-            if (activation.response.isSuccess) Future.successful(activation)
-            else Future.failed(ActivationUnsuccessfulError(activation))
+            if (activation.right.get.response.isSuccess) Future.successful(activation)
+            else Future.failed(ActivationUnsuccessfulError(activation.right.get))
           }
-
-
-      activation
-
-
     }
 
 
-  private def completeConcurrentRun(containerProxy:MesosContainerProxy, container:MesosTask)(implicit transId:TransactionId, ec:ExecutionContext): Unit ={
-    val currentActivations = warmPool.get(containerProxy).get._2.decrementAndGet() //containerProxy.data.container.currentActivations.decrementAndGet()
-    logging.info(this, s"completed run on task ${container.taskId} with ${currentActivations} remaining in-flight activations")
+  private def completeConcurrentRun(warmContainer:WarmContainer)(implicit transId:TransactionId, ec:ExecutionContext): Unit ={
+    val currentActivations = warmPool.get(warmContainer).get.decrementAndGet() //containerProxy.data.container.currentActivations.decrementAndGet()
+    logging.info(this, s"completed run on task ${warmContainer.data.container.containerId} with ${currentActivations} remaining in-flight activations")
 
   }
 
-  def initActionIdempotent(job:Run, worst:Option[MesosContainerProxy] = None, currentWorst:Option[Int] = None)(implicit transid:TransactionId):Future[Option[(MesosContainerProxy, ContainerData)]]={
+  def initActionIdempotent(job:Run, worst:Option[WarmContainer] = None, currentWorst:Option[Int] = None)(implicit transid:TransactionId):Future[Option[WarmContainer]]={
     val action = job.action
     val actionKey:String = action.fullyQualifiedName(true).toString
 
-    val newPromise = Promise[Option[(MesosContainerProxy, ContainerData)]]()
+    val newPromise = Promise[Option[WarmContainer]]()
     containerPromises.putIfAbsent(actionKey, newPromise) match {
       case Some(oldPromise) =>
         logging.info(this, s"existing promise, waiting on new container for ${actionKey}")
@@ -230,9 +216,9 @@ class ObjectContainerPool(system:ActorSystem,
       }
     }
   }
-  def schedule(action: ExecutableWhiskAction, maxConcurrency:Int, invocationNamespace: Option[EntityName], idles: Map[MesosContainerProxy, (WarmedData, AtomicInteger)])(implicit logging:Logging): (Option[(MesosContainerProxy, (WarmedData, AtomicInteger))], Int) = {
+  def schedule(action: ExecutableWhiskAction, maxConcurrency:Int, invocationNamespace: Option[EntityName], idles: Map[WarmContainer, AtomicInteger])(implicit logging:Logging): (Option[(WarmContainer, AtomicInteger)], Int) = {
     val available = idles.filter {
-      case (_, (WarmedData(_, `action`, _), _) ) => {
+      case (WarmContainer(WarmedData(_, `action`, _),_),_) => {
         true
       }
       case _ => {
@@ -242,7 +228,7 @@ class ObjectContainerPool(system:ActorSystem,
 
     //return the container with minimum usage
     val minUsage = if (available.size > 0) {
-      available.minBy(p => p._2._2.get())
+      available.minBy(p => p._2.get())
     } else {
       null
     }
@@ -250,7 +236,7 @@ class ObjectContainerPool(system:ActorSystem,
     //optimization: don't return overUsage IFF we are already waiting on a container
     val overUsage =
       if (!containerPromises.contains(action.fullyQualifiedName(true).toString)) {
-        available.filter(p => p._2._2.get() > maxConcurrency).size
+        available.filter(p => p._2.get() > maxConcurrency).size
       } else {
         0
       }

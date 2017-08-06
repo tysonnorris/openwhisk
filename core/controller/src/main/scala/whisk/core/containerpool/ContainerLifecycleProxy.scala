@@ -62,7 +62,7 @@ case object Remove
 case class NeedWork(data: WarmedData, action:ExecutableWhiskAction)
 case class NeedInitWork(data: PreWarmedData)
 case object ContainerPaused
-case object ContainerRemoved
+case class ContainerRemoved(data:ContainerData)
 /**
 // * Indicates the container resource is now free to receive a new request.
 // * This message is sent to the parent which in turn notifies the feed that a
@@ -441,7 +441,10 @@ class ContainerLifecycleProxy(
                 //            else Future.failed(ActivationUnsuccessfulError(activation))
                 //        }
             }
-
+    def warmedData():WarmedData = {
+        require(stateData.isInstanceOf[WarmedData])
+        stateData.asInstanceOf[WarmedData]
+    }
 }
 
 object ContainerLifecycleProxy {

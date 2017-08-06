@@ -178,12 +178,4 @@ class MesosLoadBalancer(config: WhiskConfig, activationStore: ActivationStore)(i
         pool.run(Run(action, msg))
     }
 
-//    private def getDockerImageName(action: ExecutableWhiskAction)(implicit transid: TransactionId): String = {
-//        // only Exec instances that are subtypes of CodeExec reach the invoker
-//        val imageName = if (!action.exec.pull) {
-//            action.exec.image.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
-//        } else action.exec.image.publicImageName
-//        logging.debug(this, s"Using image ${imageName}")
-//        imageName
-//    }
 }
