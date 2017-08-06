@@ -356,7 +356,12 @@ class ContainerLifecycleProxy(
                     case Paused => container.resume()(TransactionId.invokerNanny)
                     case _ => Future.successful(())
                 }
-                logging.warn(this, s"destroying container ${container}")
+                stateData match {
+                    case warmed:WarmedData => logging.warn(this, s"destroying warmed container ${warmed.container.containerId} last used for ${warmed.action.fullyQualifiedName(true)}")
+                    case prewarmed:PreWarmedData => logging.warn(this, s"destroying prewarmed container ${prewarmed.container.containerId} }")
+                    case _:NoData => logging.warn(this, s"destroying prewarmed container (with no data)")
+                }
+
                 unpause
                   .flatMap(_ => container.destroy()(TransactionId.invokerNanny))
                   .map(_ => ContainerRemoved).pipeTo(self)
