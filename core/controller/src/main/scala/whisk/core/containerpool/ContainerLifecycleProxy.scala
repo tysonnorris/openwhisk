@@ -33,7 +33,6 @@ import whisk.common.TransactionId
 import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity._
 import whisk.core.entity.size._
-import whisk.core.mesos.MesosTask
 
 // States
 sealed trait ContainerState
@@ -49,8 +48,8 @@ case object Removing extends ContainerState
 // Data
 sealed abstract class ContainerData(val lastUsed: Instant)
 case class NoData() extends ContainerData(Instant.EPOCH)
-case class PreWarmedData(container: MesosTask, kind: String, memoryLimit: ByteSize, action: Option[ExecutableWhiskAction] = None) extends ContainerData(Instant.EPOCH)
-case class WarmedData(container: MesosTask, action: ExecutableWhiskAction, override val lastUsed: Instant) extends ContainerData(lastUsed)
+case class PreWarmedData(container: Container, kind: String, memoryLimit: ByteSize, action: Option[ExecutableWhiskAction] = None) extends ContainerData(Instant.EPOCH)
+case class WarmedData(container: Container, action: ExecutableWhiskAction, override val lastUsed: Instant) extends ContainerData(lastUsed)
 
 // Events received by the actor
 case class Start(exec: CodeExec[_], memoryLimit: ByteSize)
@@ -62,7 +61,7 @@ case object Remove
 case class NeedWork(data: WarmedData, action:ExecutableWhiskAction)
 case class NeedInitWork(data: PreWarmedData)
 case object ContainerPaused
-case class ContainerRemoved(data:ContainerData)
+case object ContainerRemoved
 /**
 // * Indicates the container resource is now free to receive a new request.
 // * This message is sent to the parent which in turn notifies the feed that a
@@ -91,7 +90,7 @@ case class ContainerRemoved(data:ContainerData)
  * @param pauseGrace time to wait for new work before pausing the container
  */
 class ContainerLifecycleProxy(
-    factory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[MesosTask],
+    factory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[Container],
     sendActiveAck: (TransactionId, WhiskActivation, InstanceId) => Future[Any],
     storeActivation: (TransactionId, WhiskActivation) => Future[Any],
     unusedTimeout: FiniteDuration,
@@ -173,7 +172,7 @@ class ContainerLifecycleProxy(
             when(Starting) {
                 // container was successfully obtained
                 case Event(data: PreWarmedData, _) =>
-                    logging.info(this, s"${data.container.taskId} starting - prewarm")
+                    logging.info(this, s"${data.container.containerId} starting - prewarm")
                     //if we are PreWarmed only to be used for an action in-flight, don't send the NeedWork
                     data.action match {
                         case None => context.parent ! NeedInitWork(data)
@@ -193,7 +192,7 @@ class ContainerLifecycleProxy(
 
             when(Started) {
                 case Event(job: Init, data: PreWarmedData) =>
-                    logging.info(this, s"${data.container.taskId}  started - init")
+                    logging.info(this, s"${data.container.containerId}  started - init")
 
                     //                    implicit val transid = job.msg.transid
 //                    initializeAndRun(data.container, job)
@@ -205,7 +204,7 @@ class ContainerLifecycleProxy(
                     goto(Running)
 
                 case Event(data: WarmedData, _) =>
-                    logging.info(this, s"${data.container.taskId} init completed...")
+                    logging.info(this, s"${data.container.containerId} init completed...")
                     context.parent ! NeedWork(data, data.action)
                     goto(Running)//Running vs Ready, based on concurrent usage
                 case Event(Remove, data: PreWarmedData) =>
@@ -219,7 +218,7 @@ class ContainerLifecycleProxy(
 
                 // Run was successful
                 case Event(data: WarmedData, _) =>
-                    logging.info(this, s"${data.container.taskId} running - warmeddata")
+                    logging.info(this, s"${data.container.containerId} running - warmeddata")
                     //do nothing
                     context.parent ! NeedWork(data, data.action)
                     stay() using data
@@ -246,17 +245,17 @@ class ContainerLifecycleProxy(
 //                        stay
 
                 case Event(Remove, data: WarmedData) =>
-                    logging.info(this, s"${data.container.taskId}  running - remove")
+                    logging.info(this, s"${data.container.containerId}  running - remove")
                     destroyContainer(data.container)
 
 //                // pause grace timed out
 //                case Event(StateTimeout, data: WarmedData) =>
 //                    if (data.container.currentActivations.get() == 0) {
-//                        logging.info(this, s"${data.container.taskId} pausing after timeout")
+//                        logging.info(this, s"${data.container.containerId} pausing after timeout")
 //                        data.container.suspend()(TransactionId.invokerNanny).map(_ => ContainerPaused).pipeTo(self)
 //                        goto(Pausing)
 //                    } else {
-//                        logging.info(this, s"${data.container.taskId} staying running with ${data.container.currentActivations} in-flight")
+//                        logging.info(this, s"${data.container.containerId} staying running with ${data.container.currentActivations} in-flight")
 //                        stay()
 //                    }
 
@@ -265,7 +264,7 @@ class ContainerLifecycleProxy(
 
             when(Ready, stateTimeout = pauseGrace) {
                 case Event(job: Init, data: WarmedData) =>
-                    logging.info(this, s"${data.container.taskId} ready - init")
+                    logging.info(this, s"${data.container.containerId} ready - init")
 
                     //                    implicit val transid = job.msg.transid
 //                    initializeAndRun(data.container, job)
@@ -276,12 +275,12 @@ class ContainerLifecycleProxy(
                       .pipeTo(self)
                     goto(Running)
 //                case Event(data: WarmedData, _) =>
-//                    logging.info(this, s"ready - warm data without init event ${data.container.taskId}")
+//                    logging.info(this, s"ready - warm data without init event ${data.container.containerId}")
 //                    goto(Running)
 
                 // pause grace timed out
                 case Event(StateTimeout, data: WarmedData) =>
-                    logging.info(this, s"${data.container.taskId} pausing after timeout")
+                    logging.info(this, s"${data.container.containerId} pausing after timeout")
                     data.container.suspend()(TransactionId.invokerNanny).map(_ => ContainerPaused).pipeTo(self)
                     goto(Pausing)
 
@@ -315,7 +314,7 @@ class ContainerLifecycleProxy(
 
                 // timeout or removing
                 case Event(StateTimeout | Remove, data: WarmedData) =>
-                    logging.info(this, s"${data.container.taskId} removing after unuse timeout")
+                    logging.info(this, s"${data.container.containerId} removing after unuse timeout")
                     destroyContainer(data.container)
             }
 
@@ -378,7 +377,7 @@ class ContainerLifecycleProxy(
               * @return a future completing after logs have been collected and
               *         added to the WhiskActivation
               */
-            def initialize(container: MesosTask, action: ExecutableWhiskAction): Future[WarmedData] = {
+            def initialize(container: Container, action: ExecutableWhiskAction): Future[WarmedData] = {
                 val actionTimeout = action.limits.timeout.duration
 
                 // Only initialize iff we haven't yet warmed the container
@@ -448,7 +447,7 @@ class ContainerLifecycleProxy(
 }
 
 object ContainerLifecycleProxy {
-    def props(factory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[MesosTask],
+    def props(factory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[Container],
               ack: (TransactionId, WhiskActivation, InstanceId) => Future[Any],
               store: (TransactionId, WhiskActivation) => Future[Any],
               unusedTimeout: FiniteDuration = 10.minutes,

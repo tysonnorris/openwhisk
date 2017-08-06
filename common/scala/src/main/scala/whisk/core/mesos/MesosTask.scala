@@ -65,7 +65,7 @@ object MesosTask {
              network: String = "bridge",
              dnsServers: Seq[String] = Seq(),
              name: Option[String] = None)(
-              implicit mesosClientActor: ActorRef, ec: ExecutionContext, log: Logging, af:ActorRefFactory): Future[MesosTask] = {
+              implicit mesosClientActor: ActorRef, ec: ExecutionContext, log: Logging, af:ActorRefFactory): Future[Container] = {
     implicit val tid = transid
 
     log.info(this, s"creating task for image ${image}...")

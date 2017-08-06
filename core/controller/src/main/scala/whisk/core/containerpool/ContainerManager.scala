@@ -35,7 +35,7 @@ import whisk.core.entity.size._
  */
 
 //incoming messages - from MesosContainerPool
-case class GetContainer(client:ActorRef, action:ExecutableWhiskAction, maxConcurrent:Int = 1, knownTaskIds:Seq[String])
+case class GetContainer(client:ActorRef, action:ExecutableWhiskAction, maxConcurrent:Int = 1, knownTaskIds:Seq[ContainerId])
 case class ReportUsage(client:ActorRef, container:WarmContainer, currentActivations:Int)
 
 
@@ -102,7 +102,7 @@ class ContainerManager(childFactory: ActorRefFactory => ActorRef,
           //take a prewarm or create a container
           val container = takePrewarmContainer(action)
           container match {
-            case Some(c) => logging.warn(this, s"using prewarm container ${c._2.container.taskId} for ${action.fullyQualifiedName(true)}")
+            case Some(c) => logging.warn(this, s"using prewarm container ${c._2.container.containerId} for ${action.fullyQualifiedName(true)}")
             case None => //nothing
           }
           container
@@ -155,7 +155,7 @@ class ContainerManager(childFactory: ActorRefFactory => ActorRef,
       prewarmedPool.update(sender(), data)
     }
 
-    case ContainerRemoved(data) => {
+    case ContainerRemoved => {
       logging.info(this, "container removed...")
       //TODO: remove via predicate?
       clusterWarmPool.foreach (p => {
@@ -270,7 +270,7 @@ object ContainerManager {
             unusedTimeout: FiniteDuration = 10.minutes,
             pauseGrace: FiniteDuration = 50.milliseconds) = Props(new ContainerManager(factory, prewarmConfig))
 
-  def schedule(action: ExecutableWhiskAction, maxConcurrency:Int, invocationNamespace: Option[EntityName], idles: Map[WarmContainer, AtomicLong], knownTaskIds:Seq[String])(implicit logging:Logging): Option[(WarmContainer, AtomicLong)] = {
+  def schedule(action: ExecutableWhiskAction, maxConcurrency:Int, invocationNamespace: Option[EntityName], idles: Map[WarmContainer, AtomicLong], knownTaskIds:Seq[ContainerId])(implicit logging:Logging): Option[(WarmContainer, AtomicLong)] = {
     idles.find {
       case (WarmContainer(WarmedData(container, `action`, _),_), currentActivations)
         if !knownTaskIds.contains(container.containerId) && currentActivations.get() <= maxConcurrency => true

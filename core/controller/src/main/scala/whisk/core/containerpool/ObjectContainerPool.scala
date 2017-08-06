@@ -55,7 +55,7 @@ class ObjectContainerPool(system:ActorSystem,
 
       }
       case ClientNotifyRemoval(proxy) => {
-        logging.info(this, s"notified of a container removal ${proxy.data.container.taskId}")
+        logging.info(this, s"notified of a container removal ${proxy.data.container.containerId}")
         warmPool.get(proxy) match {
           case Some(p) => if (p.get() == 0){
             warmPool.remove(proxy)
@@ -64,7 +64,7 @@ class ObjectContainerPool(system:ActorSystem,
               cManager ! ReportUsage(cMgrClient, proxy, p.get())
             }
           case None =>
-            logging.info(this, s"removal of unknown container ${proxy.data.container.taskId}")
+            logging.info(this, s"removal of unknown container ${proxy.data.container.containerId}")
         }
       }
 
@@ -101,7 +101,7 @@ class ObjectContainerPool(system:ActorSystem,
         newContainer.flatMap(c => {
           c match {
             case Some(warmContainer) =>
-              logging.info(this, s"running from new warmpool container ${warmContainer.data.container.taskId}")
+              logging.info(this, s"running from new warmpool container ${warmContainer.data.container.containerId}")
               Future.successful(run(warmContainer, job)(job.msg.transid))
             case None =>
               //TODO: some backoff retry?
@@ -202,7 +202,7 @@ class ObjectContainerPool(system:ActorSystem,
       case None => {
         logging.info(this, s"requesting a new container for ${actionKey}")
         //collect knownTaskIds, so that we are not receiving a container we already know about
-        val knownTaskIds = warmPool.map( p => p._1.data.container.taskId).toSeq
+        val knownTaskIds = warmPool.map( p => p._1.data.container.containerId).toSeq
         //send a message to init this promise
         cManager ! GetContainer(cMgrClient, job.action, maxConcurrency, knownTaskIds)
         newPromise.future.map(p => {
