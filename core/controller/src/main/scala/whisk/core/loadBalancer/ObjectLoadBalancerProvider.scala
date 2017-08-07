@@ -2,6 +2,7 @@ package whisk.core.loadBalancer
 
 import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
+import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.Failure
@@ -10,7 +11,6 @@ import whisk.common.Logging
 import whisk.common.TransactionId
 import whisk.core.WhiskConfig
 import whisk.core.connector.ActivationMessage
-import whisk.core.containerpool.ActivationTracker
 import whisk.core.containerpool.ContainerFactoryProvider
 import whisk.core.containerpool.ContainerLifecycleProxy
 import whisk.core.containerpool.ContainerManager
@@ -35,28 +35,23 @@ import whisk.spi.SpiLoader
  * Created by tnorris on 6/23/17.
  */
 
-object ConcurrentLoadBalancerProvider extends SpiFactory[LoadBalancerProvider] {
-    override def apply(dependencies: Dependencies): LoadBalancerProvider = new ConcurrentLoadBalancerProvider
+object ObjectLoadBalancerProvider extends SpiFactory[LoadBalancerProvider] {
+    override def apply(dependencies: Dependencies): LoadBalancerProvider = new ObjectLoadBalancerProvider
 }
 
-class ConcurrentLoadBalancerProvider() extends LoadBalancerProvider {
+class ObjectLoadBalancerProvider() extends LoadBalancerProvider {
     def getLoadBalancer(config: WhiskConfig, instance: InstanceId, entityStore: EntityStore, activationStore: ActivationStore)(implicit logging: Logging, actorSystem: ActorSystem): LoadBalancer = {
-        new ConcurrentLoadBalancer(config, activationStore)(logging, actorSystem)
+        new ObjectLoadBalancer(config, activationStore)(logging, actorSystem)
     }
 }
 
-class ConcurrentLoadBalancer(config: WhiskConfig, activationStore: ActivationStore)(implicit val logging: Logging, val actorSystem: ActorSystem) extends LoadBalancer with ActivationTracker {
-
+class ObjectLoadBalancer(config: WhiskConfig, activationStore: ActivationStore)(implicit val logging: Logging, val actorSystem: ActorSystem) extends LoadBalancer {
+    implicit val ec: ExecutionContext = actorSystem.dispatcher
     val maxConcurrency = actorSystem.settings.config.getInt("whisk.mesos.max-concurrent")
 
     implicit val c = config
 
     val containerFactory = SpiLoader.get[ContainerFactoryProvider]().getContainerFactory(actorSystem, logging, config).createContainer _
-    /** Sends an active-ack. */
-
-    def ack(tid: TransactionId, activation: WhiskActivation, controllerInstance: InstanceId): Future[Unit] = {
-        Future.successful(processCompletion(tid, activation.activationId, activation))
-    }
 
     /** Stores an activation in the database. */
     val store = (tid: TransactionId, activation: WhiskActivation) => {
@@ -84,7 +79,7 @@ class ConcurrentLoadBalancer(config: WhiskConfig, activationStore: ActivationSto
     })
 
     /** Creates a ContainerProxy Actor when being called. */
-    val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerLifecycleProxy.props(containerFactory, ack, store, 30.seconds))
+    val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerLifecycleProxy.props(containerFactory, 30.seconds))
 
     val cManagerClient = actorSystem.actorOf(ContainerManager.props(
         childFactory,

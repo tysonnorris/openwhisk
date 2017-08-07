@@ -84,15 +84,11 @@ case object ContainerRemoved
  *
  * @constructor
  * @param factory a function generating a Container
- * @param sendActiveAck a function sending the activation via active ack
- * @param storeActivation a function storing the activation in a persistent store
  * @param unusedTimeout time after which the container is automatically thrown away
  * @param pauseGrace time to wait for new work before pausing the container
  */
 class ContainerLifecycleProxy(
     factory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[Container],
-    sendActiveAck: (TransactionId, WhiskActivation, InstanceId) => Future[Any],
-    storeActivation: (TransactionId, WhiskActivation) => Future[Any],
     unusedTimeout: FiniteDuration,
     pauseGrace: FiniteDuration) extends FSM[ContainerState, ContainerData] with Stash {
     implicit val ec = context.system.dispatcher
@@ -453,10 +449,8 @@ class ContainerLifecycleProxy(
 
 object ContainerLifecycleProxy {
     def props(factory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[Container],
-              ack: (TransactionId, WhiskActivation, InstanceId) => Future[Any],
-              store: (TransactionId, WhiskActivation) => Future[Any],
               unusedTimeout: FiniteDuration = 10.minutes,
-              pauseGrace: FiniteDuration = 50.milliseconds) = Props(new ContainerLifecycleProxy(factory, ack, store, unusedTimeout, pauseGrace))
+              pauseGrace: FiniteDuration = 50.milliseconds) = Props(new ContainerLifecycleProxy(factory, unusedTimeout, pauseGrace))
 
     // Needs to be thread-safe as it's used by multiple proxies concurrently.
     private val containerCount = new Counter
