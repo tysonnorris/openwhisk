@@ -56,7 +56,8 @@ object MesosTask {
   implicit val ec = system.dispatcher
 
 
-  def create(transid: TransactionId,
+  def create(mesosClientActor: ActorRef,
+             transid: TransactionId,
              image: String,
              userProvidedImage: Boolean = false,
              memory: ByteSize = 256.MB,
@@ -65,7 +66,7 @@ object MesosTask {
              network: String = "bridge",
              dnsServers: Seq[String] = Seq(),
              name: Option[String] = None)(
-              implicit mesosClientActor: ActorRef, ec: ExecutionContext, log: Logging, af:ActorRefFactory): Future[Container] = {
+              implicit ec: ExecutionContext, log: Logging, af:ActorRefFactory): Future[Container] = {
     implicit val tid = transid
 
     log.info(this, s"creating task for image ${image}...")

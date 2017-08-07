@@ -106,7 +106,7 @@ class ObjectContainerPool(system:ActorSystem,
             case None =>
               //TODO: some backoff retry?
               //outer future (posting) is successful, but inner (processing) is failed)
-              Future.successful(Future.failed(new Exception("could not start container in the mesos cluster...")))
+              Future.successful(Future.failed(new Exception("could not start new container in the container pool...")))
           }
         })
     }

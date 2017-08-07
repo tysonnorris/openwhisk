@@ -19,24 +19,10 @@ package whisk.core.containerpool
 
 import spray.json.DefaultJsonProtocol._
 import spray.json._
-import whisk.common.Counter
 import whisk.core.connector.ActivationMessage
 import whisk.core.entity._
 case class Run(action: ExecutableWhiskAction, msg: ActivationMessage)
 object ContainerProxy {
-
-    // Needs to be thread-safe as it's used by multiple proxies concurrently.
-    private val containerCount = new Counter
-
-    /**
-     * Generates a unique container name.
-     *
-     * @param prefix the container name's prefix
-     * @param suffix the container name's suffix
-     * @return a unique container name
-     */
-    def containerName(instance: InstanceId, prefix: String, suffix: String) =
-        s"wsk${instance.toInt}_${containerCount.next()}_${prefix}_${suffix}".replaceAll("[^a-zA-Z0-9_]", "")
 
     /**
      * Creates a WhiskActivation ready to be sent via active ack.

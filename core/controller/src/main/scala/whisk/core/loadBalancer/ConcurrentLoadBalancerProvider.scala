@@ -1,9 +1,7 @@
-package whisk.core.mesos
+package whisk.core.loadBalancer
 
 import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
-import akka.pattern.ask
-import scala.concurrent.Await
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.Failure
@@ -13,16 +11,15 @@ import whisk.common.TransactionId
 import whisk.core.WhiskConfig
 import whisk.core.connector.ActivationMessage
 import whisk.core.containerpool.ActivationTracker
+import whisk.core.containerpool.ContainerFactoryProvider
 import whisk.core.containerpool.ContainerLifecycleProxy
 import whisk.core.containerpool.ContainerManager
 import whisk.core.containerpool.ObjectContainerPool
 import whisk.core.containerpool.PrewarmingConfig
 import whisk.core.containerpool.Run
 import whisk.core.entity.ActivationId
-import whisk.core.entity.ByteSize
 import whisk.core.entity.CodeExecAsString
 import whisk.core.entity.ExecManifest
-import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.ExecutableWhiskAction
 import whisk.core.entity.InstanceId
 import whisk.core.entity.UUID
@@ -30,84 +27,31 @@ import whisk.core.entity.WhiskActivation
 import whisk.core.entity.size._
 import whisk.core.entity.types.ActivationStore
 import whisk.core.entity.types.EntityStore
-import whisk.core.loadBalancer.LoadBalancer
-import whisk.core.loadBalancer.LoadBalancerProvider
 import whisk.spi.Dependencies
 import whisk.spi.SpiFactory
+import whisk.spi.SpiLoader
 
 /**
  * Created by tnorris on 6/23/17.
  */
 
-object MesosLoadBalancerProvider extends SpiFactory[LoadBalancerProvider] {
-    override def apply(dependencies: Dependencies): LoadBalancerProvider = new MesosLoadBalancerProvider
+object ConcurrentLoadBalancerProvider extends SpiFactory[LoadBalancerProvider] {
+    override def apply(dependencies: Dependencies): LoadBalancerProvider = new ConcurrentLoadBalancerProvider
 }
 
-class MesosLoadBalancerProvider() extends LoadBalancerProvider {
+class ConcurrentLoadBalancerProvider() extends LoadBalancerProvider {
     def getLoadBalancer(config: WhiskConfig, instance: InstanceId, entityStore: EntityStore, activationStore: ActivationStore)(implicit logging: Logging, actorSystem: ActorSystem): LoadBalancer = {
-        new MesosLoadBalancer(config, activationStore)(logging, actorSystem)
+        new ConcurrentLoadBalancer(config, activationStore)(logging, actorSystem)
     }
 }
 
-class MesosLoadBalancer(config: WhiskConfig, activationStore: ActivationStore)(implicit val logging: Logging, val actorSystem: ActorSystem) extends LoadBalancer with ActivationTracker {
-    //init mesos framework:
+class ConcurrentLoadBalancer(config: WhiskConfig, activationStore: ActivationStore)(implicit val logging: Logging, val actorSystem: ActorSystem) extends LoadBalancer with ActivationTracker {
 
-    val mesosMaster = actorSystem.settings.config.getString("whisk.mesos.master-url")
     val maxConcurrency = actorSystem.settings.config.getInt("whisk.mesos.max-concurrent")
-    logging.info(this, s"subscribing to mesos master at ${mesosMaster}")
 
-    implicit val mesosClientActor = actorSystem.actorOf(MesosClientActor.props(
-        "whisk-loadbalancer-" + UUID(),
-        "whisk-loadbalancer-framework",
-        mesosMaster,
-        "*",
-        taskBuilder = MesosTask.buildTask
-    ))
+    implicit val c = config
 
-    mesosClientActor ! Subscribe
-
-    //handle shutdown
-    sys.addShutdownHook({
-        val complete: Future[Any] = mesosClientActor.ask(Teardown)(20.seconds)
-        Await.result(complete, 25.seconds)
-        logging.info(this, "teardown completed!")
-    })
-
-
-
-
-    //TODO: verify subscribed status
-    /** Factory used by the ContainerProxy to physically create a new container. */
-    val containerFactory = (tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize) => {
-        //TODO: install all images in adobe
-        val image = if (userProvidedImage) {
-            logging.info(this, "using public image")
-            actionImage.publicImageName
-        } else {
-            logging.info(this, "using local image")
-            actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
-        }
-
-        logging.info(this, s"using Mesos to create a container with image ${image}...")
-        val startingTask = MesosTask.create(
-            tid,
-            image = image,
-            userProvidedImage = userProvidedImage,
-            memory = memory,
-            cpuShares = 0, //OldContainerPool.cpuShare(config),
-            environment = Map("__OW_API_HOST" -> config.wskApiHost),
-            network = config.invokerContainerNetwork,
-            dnsServers = config.invokerContainerDns,
-            name = Some(name))
-
-        logging.info(this, s"created task is completed??? ${startingTask.isCompleted}")
-        startingTask.map(runningTask => {
-            logging.info(this, "returning running task")
-            runningTask
-        })
-
-    }
-
+    val containerFactory = SpiLoader.get[ContainerFactoryProvider]().getContainerFactory(actorSystem, logging, config).createContainer _
     /** Sends an active-ack. */
 
     def ack(tid: TransactionId, activation: WhiskActivation, controllerInstance: InstanceId): Future[Unit] = {
