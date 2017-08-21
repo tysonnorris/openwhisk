@@ -2,6 +2,7 @@ package whisk.core.mesos
 
 import java.time.Instant
 import akka.actor.{ActorRef, ActorRefFactory, ActorSystem}
+import akka.event.LoggingAdapter
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.client.RequestBuilding.Post
 import akka.http.scaladsl.model.{ContentTypes, HttpRequest, HttpResponse}
@@ -10,6 +11,11 @@ import akka.pattern.ask
 import akka.stream.scaladsl.{Keep, Sink, Source}
 import akka.stream.{ActorMaterializer, OverflowStrategy, QueueOfferResult}
 import akka.util.Timeout
+import com.adobe.api.platform.runtime.mesos.DeleteTask
+import com.adobe.api.platform.runtime.mesos.Running
+import com.adobe.api.platform.runtime.mesos.SubmitTask
+import com.adobe.api.platform.runtime.mesos.TaskBuilder
+import com.adobe.api.platform.runtime.mesos.TaskReqs
 import org.apache.mesos.v1.Protos
 import org.apache.mesos.v1.Protos.ContainerInfo.DockerInfo
 import org.apache.mesos.v1.Protos.ContainerInfo.DockerInfo.PortMapping
@@ -77,7 +83,7 @@ object MesosTask {
     val mesosRam = memory.toMB.toInt
     val task = TaskReqs(taskId, image, mesosCpuShares, mesosRam, 8080)
 
-    val launched:Future[TaskDetails] = mesosClientActor.ask(SubmitTask(task))(taskLaunchTimeout).mapTo[TaskDetails]
+    val launched:Future[Running] = mesosClientActor.ask(SubmitTask(task))(taskLaunchTimeout).mapTo[Running]
 
 
     launched.map (taskDetails => {
@@ -95,13 +101,17 @@ object MesosTask {
 
   }
 
-  def buildTask(reqs:TaskReqs, offer:Offer, portIndex:Int):TaskInfo = {
+}
+
+object ActionTaskBuilder extends TaskBuilder {
+
+  override def apply(reqs: TaskReqs, offer: Offer, portIndex: Int)(implicit logger: LoggingAdapter): TaskInfo = {
     val containerPort = reqs.port
     //getting the port from the ranges is hard...
     var hostPort = 0
     var portSeekIndex = 0
     val ranges = offer.getResourcesList.asScala
-      .filter(res => res.getName == "ports").iterator.next().getRanges.getRangeList.asScala
+            .filter(res => res.getName == "ports").iterator.next().getRanges.getRangeList.asScala
     require(ranges.size > 0, s"no available ports in resources for offer ${offer}")
     val rangesIt = ranges.iterator
     var rangeSeek = rangesIt.next()
@@ -126,61 +136,60 @@ object MesosTask {
     val dockerImage = reqs.dockerImage
 
     val healthCheck = HealthCheck.newBuilder()
-        .setType(HealthCheck.Type.TCP)
-      .setTcp(TCPCheckInfo.newBuilder()
-        .setPort(containerPort))
-      .setDelaySeconds(0)
-      .setIntervalSeconds(1)
-      .setTimeoutSeconds(1)
-      .setGracePeriodSeconds(25)
+            .setType(HealthCheck.Type.TCP)
+            .setTcp(TCPCheckInfo.newBuilder()
+                    .setPort(containerPort))
+            .setDelaySeconds(0)
+            .setIntervalSeconds(1)
+            .setTimeoutSeconds(1)
+            .setGracePeriodSeconds(25)
 
     val task = TaskInfo.newBuilder
-      .setName(reqs.taskId)
-      .setTaskId(TaskID.newBuilder
-        .setValue(reqs.taskId))
-      .setAgentId(offer.getAgentId)
-      .setCommand(CommandInfo.newBuilder
-        .setEnvironment(Protos.Environment.newBuilder
-          .addVariables(Protos.Environment.Variable.newBuilder
-            .setName("__OW_API_HOST")
-            .setValue(agentHost)))
-        .setShell(false)
-        .build())
-      .setContainer(ContainerInfo.newBuilder
-        .setType(ContainerInfo.Type.DOCKER)
-        .setDocker(DockerInfo.newBuilder
-          .setImage(dockerImage)
-          .setNetwork(DockerInfo.Network.BRIDGE)
-          .addPortMappings(PortMapping.newBuilder
-            .setContainerPort(containerPort)
-            .setHostPort(hostPort)
-            .build)
-        ).build())
-      .setHealthCheck(healthCheck)
-      .addResources(Resource.newBuilder()
-        .setName("ports")
-        .setType(Value.Type.RANGES)
-        .setRanges(Ranges.newBuilder()
-          .addRange(Value.Range.newBuilder()
-            .setBegin(hostPort)
-            .setEnd(hostPort))))
-      .addResources(Resource.newBuilder
-        .setName("cpus")
-        .setRole("*")
-        .setType(Value.Type.SCALAR)
-        .setScalar(Value.Scalar.newBuilder
-          .setValue(reqs.cpus)))
-      .addResources(Resource.newBuilder
-        .setName("mem")
-        .setRole("*")
-        .setType(Value.Type.SCALAR)
-        .setScalar(Value.Scalar.newBuilder
-          .setValue(reqs.mem)))
-      .build
+            .setName(reqs.taskId)
+            .setTaskId(TaskID.newBuilder
+                    .setValue(reqs.taskId))
+            .setAgentId(offer.getAgentId)
+            .setCommand(CommandInfo.newBuilder
+                    .setEnvironment(Protos.Environment.newBuilder
+                            .addVariables(Protos.Environment.Variable.newBuilder
+                                    .setName("__OW_API_HOST")
+                                    .setValue(agentHost)))
+                    .setShell(false)
+                    .build())
+            .setContainer(ContainerInfo.newBuilder
+                    .setType(ContainerInfo.Type.DOCKER)
+                    .setDocker(DockerInfo.newBuilder
+                            .setImage(dockerImage)
+                            .setNetwork(DockerInfo.Network.BRIDGE)
+                            .addPortMappings(PortMapping.newBuilder
+                                    .setContainerPort(containerPort)
+                                    .setHostPort(hostPort)
+                                    .build)
+                    ).build())
+            .setHealthCheck(healthCheck)
+            .addResources(Resource.newBuilder()
+                    .setName("ports")
+                    .setType(Value.Type.RANGES)
+                    .setRanges(Ranges.newBuilder()
+                            .addRange(Value.Range.newBuilder()
+                                    .setBegin(hostPort)
+                                    .setEnd(hostPort))))
+            .addResources(Resource.newBuilder
+                    .setName("cpus")
+                    .setRole("*")
+                    .setType(Value.Type.SCALAR)
+                    .setScalar(Value.Scalar.newBuilder
+                            .setValue(reqs.cpus)))
+            .addResources(Resource.newBuilder
+                    .setName("mem")
+                    .setRole("*")
+                    .setType(Value.Type.SCALAR)
+                    .setScalar(Value.Scalar.newBuilder
+                            .setValue(reqs.mem)))
+            .build
     task
   }
 }
-
 object JsonFormatters extends DefaultJsonProtocol{
   implicit val createContainerJson = jsonFormat3(CreateContainer)
 }

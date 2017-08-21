@@ -3,6 +3,9 @@ package whisk.core.mesos
 import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
 import akka.pattern.ask
+import com.adobe.api.platform.runtime.mesos.MesosClient
+import com.adobe.api.platform.runtime.mesos.Subscribe
+import com.adobe.api.platform.runtime.mesos.Teardown
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -44,12 +47,12 @@ class MesosContainerFactory(val actorSystem:ActorSystem, val logging:Logging) ex
     val maxConcurrency = actorSystem.settings.config.getInt("whisk.mesos.max-concurrent")
     logging.info(this, s"subscribing to mesos master at ${mesosMaster}")
 
-    val mesosClientActor = actorSystem.actorOf(MesosClientActor.props(
+    val mesosClientActor = actorSystem.actorOf(MesosClient.props(
         "whisk-loadbalancer-" + UUID(),
         "whisk-loadbalancer-framework",
         mesosMaster,
         "*",
-        taskBuilder = MesosTask.buildTask
+        taskBuilder = ActionTaskBuilder
     ))
 
     mesosClientActor ! Subscribe
