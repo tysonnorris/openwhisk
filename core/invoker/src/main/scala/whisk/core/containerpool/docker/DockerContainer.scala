@@ -32,6 +32,8 @@ import whisk.common.TransactionId
 import whisk.core.containerpool.Interval
 import whisk.core.containerpool.BlackboxStartupError
 import whisk.core.containerpool.Container
+import whisk.core.containerpool.ContainerId
+import whisk.core.containerpool.ContainerIp
 import whisk.core.containerpool.InitializationError
 import whisk.core.containerpool.WhiskContainerStartupError
 import whisk.core.entity.ActivationResponse
@@ -120,7 +122,7 @@ object DockerContainer {
  * @param id the id of the container
  * @param ip the ip of the container
  */
-class DockerContainer(id: ContainerId, ip: ContainerIp)(
+class DockerContainer(val id: ContainerId, val ip: ContainerIp)(
     implicit docker: DockerApiWithFileAccess, runc: RuncApi, ec: ExecutionContext, logger: Logging) extends Container with DockerActionLogDriver {
 
     /** The last read-position in the log file */

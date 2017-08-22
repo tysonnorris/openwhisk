@@ -19,15 +19,12 @@ package whisk.core.invoker
 
 import java.nio.charset.StandardCharsets
 import java.time.Instant
-
 import scala.concurrent.Await
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
-
 import org.apache.kafka.common.errors.RecordTooLargeException
-
 import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
 import akka.actor.Props
@@ -42,16 +39,15 @@ import whisk.core.connector.CompletionMessage
 import whisk.core.connector.MessageFeed
 import whisk.core.connector.MessageProducer
 import whisk.core.connector.MessagingProvider
+import whisk.core.containerpool.ContainerFactoryProvider
 import whisk.core.containerpool.ContainerPool
 import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.PrewarmingConfig
 import whisk.core.containerpool.Run
 import whisk.core.containerpool.docker.DockerClientWithFileAccess
-import whisk.core.containerpool.docker.DockerContainer
 import whisk.core.containerpool.docker.RuncClient
 import whisk.core.database.NoDocumentException
 import whisk.core.entity._
-import whisk.core.entity.ExecManifest.ImageName
 import whisk.core.entity.size._
 import whisk.http.Messages
 import whisk.spi.SpiLoader
@@ -59,6 +55,7 @@ import whisk.spi.SpiLoader
 class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: MessageProducer)(implicit actorSystem: ActorSystem, logging: Logging) {
 
     implicit val ec = actorSystem.dispatcher
+    implicit val cfg = config
 
     /** Initialize needed databases */
     private val entityStore = WhiskEntityStore.datastore(config)
@@ -99,24 +96,7 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
     sys.addShutdownHook(cleanup())
 
     /** Factory used by the ContainerProxy to physically create a new container. */
-    val containerFactory = (tid: TransactionId, name: String, actionImage: ImageName, userProvidedImage: Boolean, memory: ByteSize) => {
-        val image = if (userProvidedImage) {
-            actionImage.publicImageName
-        } else {
-            actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
-        }
-
-        DockerContainer.create(
-            tid,
-            image = image,
-            userProvidedImage = userProvidedImage,
-            memory = memory,
-            cpuShares = config.invokerCoreShare.toInt,
-            environment = Map("__OW_API_HOST" -> config.wskApiHost),
-            network = config.invokerContainerNetwork,
-            dnsServers = config.invokerContainerDns,
-            name = Some(name))
-    }
+    val containerFactory = SpiLoader.get[ContainerFactoryProvider]().getContainerFactory(actorSystem, logging, config).createContainer _
 
     /** Sends an active-ack. */
     val ack = (tid: TransactionId, activationResult: WhiskActivation, controllerInstance: InstanceId) => {

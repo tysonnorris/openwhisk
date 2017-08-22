@@ -20,18 +20,18 @@ package whisk.core.containerpool.docker
 import java.io.FileNotFoundException
 import java.nio.file.Files
 import java.nio.file.Paths
-
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
-
 import akka.event.Logging.ErrorLevel
 import whisk.common.Logging
 import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
 import scala.collection.concurrent.TrieMap
+import whisk.core.containerpool.ContainerId
+import whisk.core.containerpool.ContainerIp
 
 /**
  * Serves as interface to the docker CLI tool.
@@ -106,13 +106,6 @@ class DockerClient(dockerHost: Option[String] = None)(executionContext: Executio
             case Failure(t) => transid.failed(this, start, t.getMessage, ErrorLevel)
         }
     }
-}
-
-case class ContainerId(val asString: String) {
-    require(asString.nonEmpty, "ContainerId must not be empty")
-}
-case class ContainerIp(val asString: String) {
-    require(asString.nonEmpty, "ContainerIp must not be empty")
 }
 
 trait DockerApi {

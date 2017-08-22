@@ -22,16 +22,16 @@ import java.io.FileInputStream
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.file.Paths
-
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.blocking
 import scala.io.Source
-
 import spray.json.DefaultJsonProtocol._
 import spray.json._
 import whisk.common.Logging
 import whisk.common.TransactionId
+import whisk.core.containerpool.ContainerId
+import whisk.core.containerpool.ContainerIp
 
 class DockerClientWithFileAccess(
     dockerHost: Option[String] = None,
