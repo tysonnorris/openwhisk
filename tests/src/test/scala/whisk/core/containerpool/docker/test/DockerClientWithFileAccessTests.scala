@@ -40,8 +40,8 @@ import org.scalatest.fixture.{ FlatSpec => FixtureFlatSpec }
 import common.StreamLogging
 import spray.json._
 import whisk.common.TransactionId
-import whisk.core.containerpool.docker.ContainerId
-import whisk.core.containerpool.docker.ContainerIp
+import whisk.core.containerpool.ContainerId
+import whisk.core.containerpool.ContainerIp
 import whisk.core.containerpool.docker.DockerClientWithFileAccess
 
 @RunWith(classOf[JUnitRunner])

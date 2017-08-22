@@ -539,5 +539,8 @@ class ContainerProxyTests extends TestKit(ActorSystem("ContainerProxys"))
             logsCount += 1
             Future.successful(Vector("helloTest"))
         }
+
+        override val id: ContainerId = ContainerId("testcontainer")
+        override val ip: ContainerIp = ContainerIp("somehost", 8080)
     }
 }

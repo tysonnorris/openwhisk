@@ -23,21 +23,19 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.duration.FiniteDuration
-
 import org.junit.runner.RunWith
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.FlatSpec
 import org.scalatest.junit.JUnitRunner
 import org.scalatest.Matchers
-
 import common.StreamLogging
 import whisk.common.LogMarker
 import whisk.common.LoggingMarkers.INVOKER_DOCKER_CMD
 import whisk.common.TransactionId
-import whisk.core.containerpool.docker.ContainerId
-import whisk.core.containerpool.docker.ContainerIp
 import whisk.core.containerpool.docker.DockerClient
 import scala.concurrent.Promise
+import whisk.core.containerpool.ContainerId
+import whisk.core.containerpool.ContainerIp
 import whisk.utils.retry
 
 @RunWith(classOf[JUnitRunner])
