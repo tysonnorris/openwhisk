@@ -32,14 +32,15 @@ import whisk.common.TransactionId
 import whisk.core.containerpool.Interval
 import whisk.core.containerpool.BlackboxStartupError
 import whisk.core.containerpool.Container
+import whisk.core.containerpool.ContainerId
+import whisk.core.containerpool.ContainerIp
 import whisk.core.containerpool.InitializationError
+import whisk.core.containerpool.RunResult
 import whisk.core.containerpool.WhiskContainerStartupError
 import whisk.core.entity.ActivationResponse
 import whisk.core.entity.ByteSize
 import whisk.core.entity.size._
 import whisk.http.Messages
-import whisk.core.entity.ActivationResponse.ContainerConnectionError
-import whisk.core.entity.ActivationResponse.ContainerResponse
 
 object DockerContainer {
     /**
@@ -253,7 +254,4 @@ class DockerContainer(val id: ContainerId, val ip: ContainerIp)(
     }
 }
 
-case class RunResult(interval: Interval, response: Either[ContainerConnectionError, ContainerResponse]) {
-    def ok = response.right.exists(_.ok)
-    def toBriefString = response.fold(_.toString, _.toString)
-}
+
