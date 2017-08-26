@@ -120,7 +120,7 @@ object DockerContainer {
  * @param id the id of the container
  * @param ip the ip of the container
  */
-class DockerContainer(id: ContainerId, ip: ContainerIp)(
+class DockerContainer(val id: ContainerId, val ip: ContainerIp)(
     implicit docker: DockerApiWithFileAccess, runc: RuncApi, ec: ExecutionContext, logger: Logging) extends Container with DockerActionLogDriver {
 
     /** The last read-position in the log file */
