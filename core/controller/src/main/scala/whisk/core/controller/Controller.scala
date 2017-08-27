@@ -44,6 +44,7 @@ import whisk.http.BasicHttpService
 import whisk.http.BasicRasService
 import whisk.spi.SpiLoader
 import scala.util.{Failure, Success}
+import whisk.core.loadBalancer.DirectLoadBalancerService
 
 
 /**
@@ -145,7 +146,8 @@ object Controller {
         ExecManifest.requiredProperties ++
         RestApiCommons.requiredProperties ++
         LoadBalancerService.requiredProperties ++
-        EntitlementProvider.requiredProperties
+        EntitlementProvider.requiredProperties ++
+        DirectLoadBalancerService.requiredProperties //either need to expose required props for spi, or use global configs
 
     private def info(config: WhiskConfig, runtimes: Runtimes, apis: List[String]) = JsObject(
         "description" -> "OpenWhisk".toJson,

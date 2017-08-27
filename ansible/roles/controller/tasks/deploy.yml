@@ -55,6 +55,9 @@
       "LIMITS_TRIGGERS_FIRES_PERMINUTE": "{{ limits.firesPerMinute }}"
       "LIMITS_ACTIONS_SEQUENCE_MAXLENGTH": "{{ limits.sequenceMaxLength }}"
       "LOADBALANCER_INVOKERBUSYTHRESHOLD": "{{ invoker.busyThreshold }}"
+      "DOCKER_REGISTRY": "{{ docker_registry }}"
+      "DOCKER_IMAGE_PREFIX": "{{ docker.image.prefix }}"
+      "DOCKER_IMAGE_TAG": "{{ docker.image.tag }}"
 
       "RUNTIMES_MANIFEST": "{{ runtimesManifest | to_json }}"
     volumes:
