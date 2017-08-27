@@ -36,6 +36,7 @@ import whisk.common.TransactionId
 import whisk.core.WhiskConfig
 import whisk.core.connector.ActivationMessage
 import whisk.core.connector.MessageFeed
+import whisk.core.containerpool.ConcurrentPoolScheduler
 import whisk.core.containerpool.ContainerFactoryProvider
 import whisk.core.containerpool.ContainerPool
 import whisk.core.containerpool.ContainerProxy
@@ -115,8 +116,9 @@ class DirectLoadBalancerService(
         f.actorOf(ContainerProxy.props(containerFactory, ack, store, instance, 30.seconds))
 
     //local pool feed
-    val maxContainers = 4//i.e. val maximumContainers = config.invokerNumCore.toInt * config.invokerCoreShare.toInt
-    val feed:ActorRef = actorSystem.actorOf(DirectFeed.props(maxContainers, (r:Run) => {pool ! r}))
+    val maxContainers = 100//i.e. val maximumContainers = config.invokerNumCore.toInt * config.invokerCoreShare.toInt
+    val maxConcurrent = 20//if maxConcurrent > maxContainers, indicates concurrent requests will be sent to pool
+    val feed:ActorRef = actorSystem.actorOf(DirectFeed.props(maxConcurrent, (r:Run) => {pool ! r}))
 
 
     val pool = actorSystem.actorOf(
@@ -125,7 +127,8 @@ class DirectLoadBalancerService(
                     maxContainers,
                     maxContainers,
                     feed,
-                    Some(PrewarmingConfig(2, prewarmExec, 256.MB))), "poolactor")
+                    Some(PrewarmingConfig(2, prewarmExec, 256.MB)),
+                    new ConcurrentPoolScheduler(maxConcurrent)), "poolactor")
 
 
 
@@ -191,7 +194,6 @@ private class DirectFeed(feedCapacity: Int, submit:Run => Unit)(implicit logging
             if (!queue.isEmpty){
                 submit(queue.dequeue())
             }
-        case msg => logging.info(this, s"feed msg: ${msg}")
     }
 }
 private object DirectFeed {

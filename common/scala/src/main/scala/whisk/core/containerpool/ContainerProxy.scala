@@ -18,16 +18,14 @@
 package whisk.core.containerpool
 
 import java.time.Instant
-
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.Success
 import scala.util.Failure
-
 import akka.actor.FSM
 import akka.actor.Props
 import akka.actor.Stash
-import akka.actor.Status.{ Failure => FailureMessage }
+import akka.actor.Status.{Failure => FailureMessage}
 import akka.pattern.pipe
 import spray.json._
 import spray.json.DefaultJsonProtocol._
@@ -97,6 +95,8 @@ class ContainerProxy(
     implicit val ec = context.system.dispatcher
     val logging = new AkkaLogging(context.system.log)
 
+    var activeActivationCount = 0
+
     startWith(Uninitialized, NoData())
 
     when(Uninitialized) {
@@ -116,6 +116,7 @@ class ContainerProxy(
         // cold start (no container to reuse or available stem cell container)
         case Event(job: Run, _) =>
             implicit val transid = job.msg.transid
+            activeActivationCount +=1
 
             // create a new container
             val container = factory(
@@ -176,6 +177,7 @@ class ContainerProxy(
     when(Started) {
         case Event(job: Run, data: PreWarmedData) =>
             implicit val transid = job.msg.transid
+            activeActivationCount +=1
             initializeAndRun(data.container, job)
                 .map(_ => WarmedData(data.container, job.msg.user.namespace, job.action, Instant.now))
                 .pipeTo(self)
@@ -192,8 +194,29 @@ class ContainerProxy(
 
         // Run was successful
         case Event(data: WarmedData, _) =>
+            activeActivationCount -=1
+            logging.info(this, s"alerting parent ${context.parent} of NeedWork in-flight count is now ${activeActivationCount}")
+
             context.parent ! NeedWork(data)
-            goto(Ready) using data
+
+            if (activeActivationCount > 0){
+                stay using data
+            } else {
+                logging.info(this, "going to ready after load completed")
+                goto(Ready) using data
+            }
+
+        case Event(job: Run, data: WarmedData) =>
+            implicit val transid = job.msg.transid
+            activeActivationCount +=1
+            logging.info(this, "begin run processing (running)")
+            val activation = initializeAndRun(data.container, job)
+//            activation.pipeTo(sender())
+            activation.map(_ => WarmedData(data.container, job.msg.user.namespace, job.action, Instant.now))
+                    .pipeTo(self)
+            logging.info(this, "end run processing (running)")
+
+            stay() using data
 
         // Failed after /init (the first run failed)
         case Event(_: FailureMessage, data: PreWarmedData) => destroyContainer(data.container)
@@ -212,6 +235,7 @@ class ContainerProxy(
     when(Ready, stateTimeout = pauseGrace) {
         case Event(job: Run, data: WarmedData) =>
             implicit val transid = job.msg.transid
+            activeActivationCount +=1
             initializeAndRun(data.container, job)
                 .map(_ => WarmedData(data.container, job.msg.user.namespace, job.action, Instant.now))
                 .pipeTo(self)
@@ -235,6 +259,7 @@ class ContainerProxy(
     when(Paused, stateTimeout = unusedTimeout) {
         case Event(job: Run, data: WarmedData) =>
             implicit val transid = job.msg.transid
+            activeActivationCount +=1
             data.container.resume().andThen {
                 // Sending the message to self on a failure will cause the message
                 // to ultimately be sent back to the parent (which will retry it)

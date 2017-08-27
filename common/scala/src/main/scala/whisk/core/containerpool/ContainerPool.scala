@@ -18,13 +18,12 @@
 package whisk.core.containerpool
 
 import scala.collection.mutable
-
 import akka.actor.Actor
 import akka.actor.ActorRef
 import akka.actor.ActorRefFactory
 import akka.actor.Props
 import whisk.common.AkkaLogging
-
+import whisk.common.Logging
 import whisk.core.entity.ByteSize
 import whisk.core.entity.CodeExec
 import whisk.core.entity.EntityName
@@ -64,7 +63,8 @@ class ContainerPool(
     maxActiveContainers: Int,
     maxPoolSize: Int,
     feed: ActorRef,
-    prewarmConfig: Option[PrewarmingConfig] = None) extends Actor {
+    prewarmConfig: Option[PrewarmingConfig] = None,
+    scheduler:ContainerPoolScheduler = ContainerPool) extends Actor {
     implicit val logging = new AkkaLogging(context.system.log)
 
     val freePool = mutable.Map[ActorRef, ContainerData]()
@@ -83,7 +83,7 @@ class ContainerPool(
         case r: Run =>
             val container = if (busyPool.size < maxActiveContainers) {
                 // Schedule a job to a warm container
-                ContainerPool.schedule(r.action, r.msg.user.namespace, freePool.toMap).orElse {
+                scheduler.schedule(r.action, r.msg.user.namespace, freePool.toMap, busyPool.toMap).orElse {
                     if (busyPool.size + freePool.size < maxPoolSize) {
                         takePrewarmContainer(r.action).orElse {
                             Some(createContainer())
@@ -91,7 +91,7 @@ class ContainerPool(
                     } else None
                 }.orElse {
                     // Remove a container and create a new one for the given job
-                    ContainerPool.remove(r.action, r.msg.user.namespace, freePool.toMap).map { toDelete =>
+                    scheduler.remove(r.action, r.msg.user.namespace, freePool.toMap).map { toDelete =>
                         removeContainer(toDelete)
                         takePrewarmContainer(r.action).getOrElse {
                             createContainer()
@@ -104,6 +104,7 @@ class ContainerPool(
                 case Some((actor, data)) =>
                     busyPool.update(actor, data)
                     freePool.remove(actor)
+                    scheduler.begin(actor, data)
                     actor ! r // forwards the run request to the container
                 case None =>
                     logging.error(this, "Rescheduling Run message, too many message in the pool")(r.msg.transid)
@@ -112,8 +113,13 @@ class ContainerPool(
 
         // Container is free to take more work
         case NeedWork(data: WarmedData) =>
-            freePool.update(sender(), data)
-            busyPool.remove(sender()).foreach(_ => feed ! MessageFeed.Processed)
+            if (scheduler.complete(sender(), data)){
+                freePool.update(sender(), data)
+                busyPool.remove(sender()).foreach(_ => feed ! MessageFeed.Processed)
+            } else {
+                busyPool.update(sender(), data)
+                busyPool.get(sender()).foreach(_ => feed ! MessageFeed.Processed)
+            }
 
         // Container is prewarmed and ready to take work
         case NeedWork(data: PreWarmedData) =>
@@ -172,7 +178,7 @@ class ContainerPool(
     }
 }
 
-object ContainerPool {
+object ContainerPool extends ContainerPoolScheduler {
     /**
      * Finds the best container for a given job to run on.
      *
@@ -188,12 +194,15 @@ object ContainerPool {
      * @param idles a map of idle containers, awaiting work
      * @return a container if one found
      */
-    def schedule[A](action: ExecutableWhiskAction, invocationNamespace: EntityName, idles: Map[A, ContainerData]): Option[(A, ContainerData)] = {
+    def schedule[A](action: ExecutableWhiskAction, invocationNamespace: EntityName, idles: Map[A, ContainerData],  busy: Map[A, ContainerData]): Option[(A, ContainerData)] = {
         idles.find {
             case (_, WarmedData(_, `invocationNamespace`, `action`, _)) => true
             case _ => false
         }
     }
+
+    def complete[A](containerProxy: A, data: ContainerData): Boolean = true
+    def begin[A](containerProxy: A, data: ContainerData): Unit = Unit
 
     /**
      * Finds the best container to remove to make space for the job passed to run.
@@ -221,8 +230,50 @@ object ContainerPool {
               maxActive: Int,
               size: Int,
               feed: ActorRef,
-              prewarmConfig: Option[PrewarmingConfig] = None) = Props(new ContainerPool(factory, maxActive, size, feed, prewarmConfig))
+              prewarmConfig: Option[PrewarmingConfig] = None,
+              scheduler: ContainerPoolScheduler = ContainerPool) = Props(new ContainerPool(factory, maxActive, size, feed, prewarmConfig, scheduler))
+}
+
+trait ContainerPoolScheduler {
+    def schedule[A](action: ExecutableWhiskAction, invocationNamespace: EntityName, idles: Map[A, ContainerData],  busy: Map[A, ContainerData]): Option[(A, ContainerData)]
+    def begin[A](containerProxy: A, data: ContainerData):Unit
+    def complete[A](containerProxy: A, data: ContainerData):Boolean
+    def remove[A](action: ExecutableWhiskAction, invocationNamespace: EntityName, pool: Map[A, ContainerData]): Option[A]
 }
 
 /** Contains settings needed to perform container prewarming */
 case class PrewarmingConfig(count: Int, exec: CodeExec[_], memoryLimit: ByteSize)
+
+class ConcurrentPoolScheduler(val maxConcurrent:Int = 200)(implicit logging:Logging) extends ContainerPoolScheduler {
+    private object ActivationCounter extends mutable.HashMap[Any, Int] {
+        def inc(a: Any): Int = put(a, get(a).getOrElse(0) + 1).getOrElse(0)
+        def dec(a: Any): Int = put(a, get(a).get - 1).get//fails if doesn't exist
+    }
+    override def schedule[A](action: ExecutableWhiskAction, invocationNamespace: EntityName, idles: Map[A, ContainerData],
+        busy: Map[A, ContainerData]): Option[(A, ContainerData)] = {
+
+        busy.find {
+            case (a, WarmedData(_, `invocationNamespace`, `action`, _)) if ActivationCounter.getOrElse(a, 0) < maxConcurrent => true
+            case _ => false
+        }.orElse {
+            logging.info(this, s"no busy container available for ${action.fullyQualifiedName(false)}")
+            idles.find {
+                case (_, WarmedData(_, `invocationNamespace`, `action`, _)) => true
+                case _ => false
+            }
+        }
+    }
+
+    override def begin[A](containerProxy: A, data: ContainerData): Unit = {
+        ActivationCounter.inc(containerProxy)
+    }
+
+    override def complete[A](containerProxy: A, data: ContainerData): Boolean = {
+        val result = ActivationCounter.dec(containerProxy) == 0
+        logging.info(this, s"activation counter is now: ${ActivationCounter}")
+        result
+    }
+    override def remove[A](action: ExecutableWhiskAction, invocationNamespace: EntityName, pool: Map[A, ContainerData]): Option[A] =
+        ContainerPool.remove(action, invocationNamespace, pool)
+}
+
