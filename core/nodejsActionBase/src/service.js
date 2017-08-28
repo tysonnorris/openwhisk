@@ -14,7 +14,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// --------------------------------------CHANGES!!------------------------------------------------------------
+// global variable to keep track of the current activationID
+var act_id = "unknown";
+function hook_stdout(callback) {
+    var old_stdout_write = process.stdout.write;
+    var old_stderr_write = process.stderr.write;
+    process.stdout.write = (function(write) {
+        return function(string, encoding, fd) {
+            var args = Array.prototype.slice.call(arguments);
+            args[0] = new Date().toISOString() + "," + act_id + "," + string;
+            write.apply(process.stdout, args);
+            callback(string, encoding, fd)
+        }
+    })(process.stdout.write)
+    process.stderr.write = (function(write) {
+        return function(string, encoding, fd) {
+            var args = Array.prototype.slice.call(arguments);
+            args[0] = new Date().toISOString() + "," + act_id + "," + string;
+            write.apply(process.stderr, args);
+        };
+    }(process.stderr.write));
+    return function() {
+        process.stdout.write = old_stdout_write;
+        process.stderr.write = old_stderr_write;
+    }
+}
+var unhook = hook_stdout(function(string, encoding, fd) {});
+// --------------------------------------CHANGES!!------------------------------------------------------------
 var NodeActionRunner = require('../runner');
 var fs = require('fs');
 
@@ -107,7 +134,9 @@ function NodeActionService(config, logger) {
     this.runCode = function runCode(req) {
         if (status === Status.ready || status === Status.running) {
             setStatus(Status.running);
-
+            // --------------------------------------CHANGES!!------------------------------------------------------------
+            act_id = req.body.activation_id || "unknown";
+            // --------------------------------------CHANGES!!------------------------------------------------------------
             return doRun(req).then(function (result) {
                 //setStatus(Status.ready);
 
@@ -161,11 +190,13 @@ function NodeActionService(config, logger) {
             return Promise.reject(error);
         });
     }
-
+    // --------------------------------------CHANGES!!------------------------------------------------------------
+    // comment out this function since we won't longer need this log markers to parse the logs
     function writeMarkers() {
-        console.log('XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX');
-        console.error('XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX');
+        //console.log('XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX');
+        //console.error('XXX_THE_END_OF_A_WHISK_ACTIVATION_XXX');
     }
+    // --------------------------------------CHANGES!!------------------------------------------------------------
 }
 
 NodeActionService.getService = function(config, logger) {
