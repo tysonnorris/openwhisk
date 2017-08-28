@@ -116,8 +116,9 @@ class DirectLoadBalancerService(
         f.actorOf(ContainerProxy.props(containerFactory, ack, store, instance, 30.seconds))
 
     //local pool feed
+    //TODO: make maxContainers dynamic, based on containerfactory
     val maxContainers = 100//i.e. val maximumContainers = config.invokerNumCore.toInt * config.invokerCoreShare.toInt
-    val maxConcurrent = 20//if maxConcurrent > maxContainers, indicates concurrent requests will be sent to pool
+    val maxConcurrent = 400//if maxConcurrent > maxContainers, indicates concurrent requests will be sent to pool
     val feed:ActorRef = actorSystem.actorOf(DirectFeed.props(maxConcurrent, (r:Run) => {pool ! r}))
 
 
@@ -168,13 +169,19 @@ object DirectLoadBalancerService {
 
 }
 
-private class DirectFeed(feedCapacity: Int, submit:Run => Unit)(implicit logging: Logging) extends Actor {
-    val activations = mutable.Map[ActivationId,ActorRef]()
+//TODO: concurrentLimit does not account for multiple containers running the same action
+private class DirectFeed(concurrentLimit: Int, submit:Run => Unit)(implicit logging: Logging) extends Actor {
+    val activations = mutable.Map[ActivationId,(ActorRef, ExecutableWhiskAction)]()
+    val actionCounts = mutable.Map[ExecutableWhiskAction, Int]()
     val queue = mutable.Queue[Run]()
     override def receive: Receive = {
         case r:Run => {
-            activations.update(r.msg.activationId, sender())
-            if (activations.size < feedCapacity){
+            activations.update(r.msg.activationId, (sender(), r.action))
+            val newCount = actionCounts.getOrElse(r.action, 0)+1
+            actionCounts.put(r.action, newCount)
+
+            //if pool cannot keep up with concurrentLimit, start queueing requests
+            if (newCount < concurrentLimit+1){//triggers a new container when reaching concurrentLimit+1
                 submit(r)
             } else {
                 queue.enqueue(r)
@@ -184,7 +191,9 @@ private class DirectFeed(feedCapacity: Int, submit:Run => Unit)(implicit logging
             activations.remove(a.activationId) match {
             case Some(s) =>
                 logging.info(this, s"forwarding activation to ${s}")
-                s ! a
+                val newCount = actionCounts.getOrElse(s._2, 0)-1
+                actionCounts.put(s._2, newCount)
+                s._1 ! a
             case None =>
                 logging.warn(this, s"received completion for unknown activation ${a.activationId}")
             }
@@ -197,6 +206,6 @@ private class DirectFeed(feedCapacity: Int, submit:Run => Unit)(implicit logging
     }
 }
 private object DirectFeed {
-    def props(feedCapacity:Int = 1, submit:Run => Unit)(implicit logging:Logging) = Props(new DirectFeed(feedCapacity, submit))
+    def props(concurrentLimit:Int = 1, submit:Run => Unit)(implicit logging:Logging) = Props(new DirectFeed(concurrentLimit, submit))
 }
 private case class DirectLoadBalancerException(msg: String) extends Throwable(msg)
