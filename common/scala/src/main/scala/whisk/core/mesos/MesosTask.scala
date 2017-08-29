@@ -20,6 +20,7 @@ import org.apache.mesos.v1.Protos
 import org.apache.mesos.v1.Protos.ContainerInfo.DockerInfo
 import org.apache.mesos.v1.Protos.ContainerInfo.DockerInfo.PortMapping
 import org.apache.mesos.v1.Protos.HealthCheck.TCPCheckInfo
+import org.apache.mesos.v1.Protos.Parameter
 import org.apache.mesos.v1.Protos.Value.Ranges
 import org.apache.mesos.v1.Protos.{CommandInfo, ContainerInfo, HealthCheck, Offer, Resource, TaskID, TaskInfo, TaskStatus, Value}
 import spray.json.DefaultJsonProtocol._
@@ -161,6 +162,16 @@ object ActionTaskBuilder extends TaskBuilder {
                     .setDocker(DockerInfo.newBuilder
                             .setImage(dockerImage)
                             .setNetwork(DockerInfo.Network.BRIDGE)
+                            //--log-driver=fluentd", "--log-opt", "tag=OW_CONTAINER", "--log-opt", "fluentd-address=localhost:24225"
+                            .addParameters(Parameter.newBuilder()
+                                    .setKey("log-driver")
+                                    .setValue("fluentd"))
+                            .addParameters(Parameter.newBuilder()
+                                    .setKey("log-opt")
+                                    .setValue("tag=OW_CONTAINER"))
+                            .addParameters(Parameter.newBuilder()
+                                    .setKey("log-opt")
+                                    .setValue("fluentd-address="+agentHost+":24225"))
                             .addPortMappings(PortMapping.newBuilder
                                     .setContainerPort(containerPort)
                                     .setHostPort(hostPort)
