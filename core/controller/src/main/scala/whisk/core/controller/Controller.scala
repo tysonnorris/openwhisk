@@ -19,8 +19,7 @@ package whisk.core.controller
 
 import scala.concurrent.Await
 import scala.concurrent.duration.DurationInt
-import scala.util.{ Failure, Success }
-
+import scala.util.{Failure, Success}
 import akka.actor._
 import akka.actor.ActorSystem
 import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport._
@@ -44,6 +43,7 @@ import whisk.http.BasicHttpService
 import whisk.http.BasicRasService
 import whisk.spi.SpiLoader
 import scala.util.{Failure, Success}
+import whisk.core.containerpool.logging.LogStoreProvider
 import whisk.core.loadBalancer.DirectLoadBalancerService
 
 
@@ -106,6 +106,7 @@ class Controller(
     private implicit val loadBalancer = SpiLoader.get[LoadBalancerProvider]().getLoadBalancer(whiskConfig, instance)
     private implicit val entitlementProvider = new LocalEntitlementProvider(whiskConfig, loadBalancer)
     private implicit val activationIdFactory = new ActivationIdGenerator {}
+    private implicit val logStore = SpiLoader.get[LogStoreProvider]().logStore(actorSystem)
 
     // register collections
     Collection.initialize(entityStore)

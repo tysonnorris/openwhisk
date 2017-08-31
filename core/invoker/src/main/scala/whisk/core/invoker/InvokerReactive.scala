@@ -19,15 +19,12 @@ package whisk.core.invoker
 
 import java.nio.charset.StandardCharsets
 import java.time.Instant
-
 import scala.concurrent.Await
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
-
 import org.apache.kafka.common.errors.RecordTooLargeException
-
 import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
 import akka.actor.Props
@@ -42,6 +39,7 @@ import whisk.core.connector.CompletionMessage
 import whisk.core.connector.MessageFeed
 import whisk.core.connector.MessageProducer
 import whisk.core.connector.MessagingProvider
+import whisk.core.containerpool.Container
 import whisk.core.containerpool.ContainerFactoryProvider
 import whisk.core.containerpool.ContainerPool
 import whisk.core.containerpool.ContainerProxy
@@ -49,6 +47,7 @@ import whisk.core.containerpool.PrewarmingConfig
 import whisk.core.containerpool.Run
 import whisk.core.containerpool.docker.DockerClientWithFileAccess
 import whisk.core.containerpool.docker.RuncClient
+import whisk.core.containerpool.logging.LogStoreProvider
 import whisk.core.database.NoDocumentException
 import whisk.core.entity._
 import whisk.core.entity.size._
@@ -74,7 +73,7 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
         new MessageFeed("activation", logging,
             consumer, maximumContainers, 500.milliseconds, processActivationMessage)
     })
-
+    private val logsProvider = SpiLoader.get[LogStoreProvider]().logStore(actorSystem)
     /** Initialize container clients */
     implicit val docker = new DockerClientWithFileAccess()(ec)
     implicit val runc = new RuncClient(ec)
@@ -128,9 +127,12 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
             case Failure(t)  => logging.error(this, s"failed to record activation")
         }
     }
-
+    val collectLogs = (tid: TransactionId, container: Container, action: ExecutableWhiskAction) => {
+        implicit val transId = tid
+        logsProvider.collectLogs(container, action)
+    }
     /** Creates a ContainerProxy Actor when being called. */
-    val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(containerFactory, ack, store, instance))
+    val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(containerFactory, ack, store, collectLogs, instance))
 
     val prewarmKind = "nodejs:6"
     val prewarmExec = ExecManifest.runtimesManifest.resolveDefaultRuntime(prewarmKind).map { manifest =>

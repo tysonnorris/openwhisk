@@ -193,6 +193,8 @@ case class ExecutableWhiskAction(
      * Gets initializer for action. This typically includes the code to execute,
      * or a zip file containing the executable artifacts.
      */
+//    val config = ConfigFactory.load()
+//    val logFormatHint = config.getString("whisk.logstore.format-hint")
     def containerInitializer: JsObject = {
         val code = Option(exec.codeAsJson).filter(_ != JsNull).map("code" -> _)
         val base = Map("name" -> name.toJson, "binary" -> exec.binary.toJson, "main" -> exec.entryPoint.getOrElse("main").toJson)

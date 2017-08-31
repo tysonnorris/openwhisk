@@ -89,6 +89,7 @@ class ContainerProxy(
     factory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[Container],
     sendActiveAck: (TransactionId, WhiskActivation, InstanceId) => Future[Any],
     storeActivation: (TransactionId, WhiskActivation) => Future[Any],
+    collectLogs: (TransactionId, Container, ExecutableWhiskAction) => Future[Vector[String]],
     instance: InstanceId,
     unusedTimeout: FiniteDuration,
     pauseGrace: FiniteDuration) extends FSM[ContainerState, ContainerData] with Stash {
@@ -376,8 +377,8 @@ class ContainerProxy(
             // the activation future will always complete with Success
             case Success(ack) => sendActiveAck(tid, ack, job.msg.rootControllerIndex)
         }.flatMap { activation =>
-            container.logs(job.action.limits.logs.asMegaBytes, job.action.exec.sentinelledLogs).map { logs =>
-                activation.withLogs(ActivationLogs(logs.toVector))
+            collectLogs(tid, container, job.action).map { logs =>
+                activation.withLogs(ActivationLogs(logs))
             }
         }.andThen {
             case Success(activation) => storeActivation(tid, activation)
@@ -394,9 +395,10 @@ object ContainerProxy {
     def props(factory: (TransactionId, String, ImageName, Boolean, ByteSize) => Future[Container],
               ack: (TransactionId, WhiskActivation, InstanceId) => Future[Any],
               store: (TransactionId, WhiskActivation) => Future[Any],
+              collectLogs: (TransactionId, Container, ExecutableWhiskAction) => Future[Vector[String]],
               instance: InstanceId,
               unusedTimeout: FiniteDuration = 10.minutes,
-              pauseGrace: FiniteDuration = 50.milliseconds) = Props(new ContainerProxy(factory, ack, store, instance, unusedTimeout, pauseGrace))
+              pauseGrace: FiniteDuration = 50.milliseconds) = Props(new ContainerProxy(factory, ack, store, collectLogs, instance, unusedTimeout, pauseGrace))
 
     // Needs to be thread-safe as it's used by multiple proxies concurrently.
     private val containerCount = new Counter

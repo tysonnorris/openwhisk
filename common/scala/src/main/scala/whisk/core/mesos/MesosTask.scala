@@ -33,6 +33,8 @@ import whisk.core.containerpool.ContainerIp
 import whisk.core.containerpool.InitializationError
 import whisk.core.containerpool.Interval
 import whisk.core.containerpool.RunResult
+import whisk.core.containerpool.logging.LogStoreProvider
+import whisk.spi.SpiLoader
 //import spray.http.HttpRequest
 import whisk.common.{Counter, Logging, LoggingMarkers, TransactionId}
 import whisk.core.entity.ActivationResponse.ContainerResponse
@@ -61,7 +63,7 @@ object MesosTask {
   //implicit var ref:ActorRefFactory
   implicit val system = ActorSystem( "spray-api-service" )
   implicit val ec = system.dispatcher
-
+  private val logStore = SpiLoader.get[LogStoreProvider]().logStore(system)
 
   def create(mesosClientActor: ActorRef,
              transid: TransactionId,
@@ -76,13 +78,28 @@ object MesosTask {
               implicit ec: ExecutionContext, log: Logging, af:ActorRefFactory): Future[Container] = {
     implicit val tid = transid
 
+    //TODO: DRY this with DockerContainer.create
+    val dockerRunParameters = Map(
+      "--cap-drop" ->"NET_RAW",
+      "--cap-drop"->"NET_ADMIN",
+      "--ulimit"->"nofile=1024:1024",
+      "--pids-limit"->"1024",
+//      "--cpu-shares"-> cpuShares.toString,
+//      "--memory"-> s"${memory.toMB}m",
+      "--memory-swap"-> s"${memory.toMB}m") ++
+//      "--network", network) ++
+            dnsServers.map(d => "dns"-> d).toMap ++
+      logStore.containerParameters
+//            environmentArgs ++
+//            name.map(n => Seq("--name", n)).getOrElse(Seq.empty)
+
     log.info(this, s"creating task for image ${image}...")
 
     val taskId = s"task-${counter.next()}-${startTime}"
 
     val mesosCpuShares = cpuShares / 1024.0 //convert openwhisk (docker based) shares to mesos (cpu percentage)
     val mesosRam = memory.toMB.toInt
-    val task = TaskReqs(taskId, image, mesosCpuShares, mesosRam, 8080)
+    val task = new ExtendedTaskReqs(taskId, image, mesosCpuShares, mesosRam, 8080, dockerRunParameters, environment)
 
     val launched:Future[Running] = mesosClientActor.ask(SubmitTask(task))(taskLaunchTimeout).mapTo[Running]
 
@@ -104,9 +121,12 @@ object MesosTask {
 
 }
 
+class ExtendedTaskReqs (override val taskId: String, override val dockerImage: String, override val cpus: Double, override val mem: Int, override val port: Int, val dockerRunParameters: Map[String, String], val environmentArgs: Map[String, String]) extends TaskReqs(taskId, dockerImage, cpus, mem, port)
+
 object ActionTaskBuilder extends TaskBuilder {
 
-  override def apply(reqs: TaskReqs, offer: Offer, portIndex: Int)(implicit logger: LoggingAdapter): TaskInfo = {
+  override def apply(baseReq: TaskReqs, offer: Offer, portIndex: Int)(implicit logger: LoggingAdapter): TaskInfo = {
+    val reqs = baseReq.asInstanceOf[ExtendedTaskReqs]
     val containerPort = reqs.port
     //getting the port from the ranges is hard...
     var hostPort = 0
@@ -144,7 +164,20 @@ object ActionTaskBuilder extends TaskBuilder {
             .setIntervalSeconds(1)
             .setTimeoutSeconds(1)
             .setGracePeriodSeconds(25)
+    val environmentVars = reqs.environmentArgs.map(e =>
+      Protos.Environment.Variable.newBuilder
+              .setName(e._1)
+              .setValue(e._2)
+              .build()
+    ).asJava
 
+    logger.info( s"environment vars: ${environmentVars}")
+    val dockerRunParameters = reqs.dockerRunParameters.map(e =>
+        Parameter.newBuilder()
+            .setKey(e._1.replace("--", ""))//mesos handles the "--", so remove it from the option names
+            .setValue(e._2)
+            .build()).asJava
+    logger.info(s"run parameters: ${dockerRunParameters}")
     val task = TaskInfo.newBuilder
             .setName(reqs.taskId)
             .setTaskId(TaskID.newBuilder
@@ -161,17 +194,9 @@ object ActionTaskBuilder extends TaskBuilder {
                     .setType(ContainerInfo.Type.DOCKER)
                     .setDocker(DockerInfo.newBuilder
                             .setImage(dockerImage)
+                            //.setForcePullImage(true)//images must be updated manually at the mesos agents, for now
                             .setNetwork(DockerInfo.Network.BRIDGE)
-                            //--log-driver=fluentd", "--log-opt", "tag=OW_CONTAINER", "--log-opt", "fluentd-address=localhost:24225"
-                            .addParameters(Parameter.newBuilder()
-                                    .setKey("log-driver")
-                                    .setValue("fluentd"))
-                            .addParameters(Parameter.newBuilder()
-                                    .setKey("log-opt")
-                                    .setValue("tag=OW_CONTAINER"))
-                            .addParameters(Parameter.newBuilder()
-                                    .setKey("log-opt")
-                                    .setValue("fluentd-address="+agentHost+":24225"))
+                            .addAllParameters(dockerRunParameters)
                             .addPortMappings(PortMapping.newBuilder
                                     .setContainerPort(containerPort)
                                     .setHostPort(hostPort)

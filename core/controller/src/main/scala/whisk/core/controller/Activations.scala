@@ -28,10 +28,12 @@ import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport.sprayJsonMarsha
 import akka.http.scaladsl.model.StatusCodes.BadRequest
 import akka.http.scaladsl.server.Directives
 import akka.http.scaladsl.unmarshalling._
+import scala.concurrent.Future
 import spray.json._
 import spray.json.DefaultJsonProtocol.RootJsObjectFormat
 import spray.json.DeserializationException
 import whisk.common.TransactionId
+import whisk.core.containerpool.logging.LogStore
 import whisk.core.database.StaleParameter
 import whisk.core.entitlement.Collection
 import whisk.core.entitlement.Privilege.Privilege
@@ -58,6 +60,7 @@ trait WhiskActivationsApi
     /** Database service to GET activations. */
     protected val activationStore: ActivationStore
 
+    protected val logStore: LogStore
     /** Path to Actions REST API. */
     protected val activationsPath = "activations"
 
@@ -151,8 +154,11 @@ trait WhiskActivationsApi
      */
     private def fetch(namespace: EntityPath, activationId: ActivationId)(implicit transid: TransactionId) = {
         val docid = DocId(WhiskEntity.qualifiedName(namespace, activationId))
+
+
         pathEndOrSingleSlash {
             getEntity(WhiskActivation, activationStore, docid, postProcess = Some((activation: WhiskActivation) =>
+
                 complete(activation.toExtendedJson)))
 
         } ~ (pathPrefix(resultPath) & pathEnd) { fetchResponse(docid) } ~
@@ -169,7 +175,7 @@ trait WhiskActivationsApi
      */
     private def fetchResponse(docid: DocId)(implicit transid: TransactionId) = {
         getEntityAndProject(WhiskActivation, activationStore, docid,
-            (activation: WhiskActivation) => activation.response.toExtendedJson)
+            (activation: WhiskActivation) => Future.successful(activation.response.toExtendedJson))
     }
 
     /**
@@ -182,7 +188,7 @@ trait WhiskActivationsApi
      */
     private def fetchLogs(docid: DocId)(implicit transid: TransactionId) = {
         getEntityAndProject(WhiskActivation, activationStore, docid,
-            (activation: WhiskActivation) => activation.logs.toJsonObject)
+            (activation: WhiskActivation) => logsFromProvider(activation).map(l => l.toJsonObject))
     }
 
     /** Custom unmarshaller for query parameters "name" into valid entity name. */
@@ -211,4 +217,5 @@ trait WhiskActivationsApi
                 case Failure(t) => throw new IllegalArgumentException(Messages.badEpoch(value))
             }
         }
+    private def logsFromProvider(activation: WhiskActivation): Future[ActivationLogs] = logStore.logs(activation)
 }

@@ -36,6 +36,10 @@
       "WHISK_VERSION_DATE": "{{ whisk.version.date }}"
       "WHISK_VERSION_BUILDNO": "{{ docker.image.tag }}"
 
+      "WHISK_API_HOST_PROTO": "{{ whisk_api_host_proto | default('https') }}"
+      "WHISK_API_HOST_PORT": "{{ whisk_api_host_port | default('443') }}"
+      "WHISK_API_HOST_NAME": "{{ whisk_api_host_name | default(groups['edge'] | first) }}"
+
       "KAFKA_HOST": "{{ groups['kafka']|first }}"
       "KAFKA_HOST_PORT": "{{ kafka.port }}"
 

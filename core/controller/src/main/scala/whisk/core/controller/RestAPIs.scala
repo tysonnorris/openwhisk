@@ -24,12 +24,9 @@ import akka.http.scaladsl.model.Uri
 import akka.http.scaladsl.server.Directives
 import akka.http.scaladsl.server.Route
 import akka.http.scaladsl.model.headers._
-
 import spray.json._
 import spray.json.DefaultJsonProtocol._
-
 import scala.concurrent.ExecutionContext
-
 import whisk.common.TransactionId
 import whisk.core.WhiskConfig
 import whisk.core.WhiskConfig.whiskVersionBuildno
@@ -37,6 +34,7 @@ import whisk.core.WhiskConfig.whiskVersionDate
 import whisk.core.entity.WhiskAuthStore
 import whisk.common.Logging
 import whisk.common.TransactionId
+import whisk.core.containerpool.logging.LogStore
 import whisk.core.entity._
 import whisk.core.entity.types._
 import whisk.core.entitlement._
@@ -134,6 +132,7 @@ class RestAPIVersion(config: WhiskConfig, apiPath: String, apiVersion: String)(
     implicit val activationIdFactory: ActivationIdGenerator,
     implicit val loadBalancer: LoadBalancer,
     implicit val activationStore: ActivationStore,
+    implicit val logStore: LogStore,
     implicit val whiskConfig: WhiskConfig)
     extends SwaggerDocs(Uri.Path(apiPath) / apiVersion, "apiv1swagger.json")
     with Authenticate
@@ -231,6 +230,7 @@ class RestAPIVersion(config: WhiskConfig, apiPath: String, apiVersion: String)(
         val apiPath: String,
         val apiVersion: String)(
         implicit override val activationStore: ActivationStore,
+        override val logStore: LogStore,
         override val entitlementProvider: EntitlementProvider,
         override val executionContext: ExecutionContext,
         override val logging: Logging)

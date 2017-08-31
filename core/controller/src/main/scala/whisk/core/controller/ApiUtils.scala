@@ -200,7 +200,7 @@ trait ReadOps extends Directives {
         factory: DocumentFactory[A],
         datastore: ArtifactStore[Au],
         docid: DocId,
-        project: A => JsObject)(
+        project: A => Future[JsObject])(
             implicit transid: TransactionId,
             format: RootJsonFormat[A],
             ma: Manifest[A]) = {

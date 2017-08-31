@@ -37,11 +37,13 @@ import whisk.core.WhiskConfig
 import whisk.core.connector.ActivationMessage
 import whisk.core.connector.MessageFeed
 import whisk.core.containerpool.ConcurrentPoolScheduler
+import whisk.core.containerpool.Container
 import whisk.core.containerpool.ContainerFactoryProvider
 import whisk.core.containerpool.ContainerPool
 import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.PrewarmingConfig
 import whisk.core.containerpool.Run
+import whisk.core.containerpool.logging.LogStoreProvider
 import whisk.core.entity.ActivationId
 import whisk.core.entity.CodeExecAsString
 import whisk.core.entity.ExecManifest
@@ -77,6 +79,8 @@ class DirectLoadBalancerService(
     implicit val cfg = config
 
     private val loadBalancerData = new LoadBalancerData()
+    private val logsProvider = SpiLoader.get[LogStoreProvider]().logStore(actorSystem)
+
     val containerFactory = SpiLoader
             .get[ContainerFactoryProvider]()
             .getContainerFactory(actorSystem, logging, config)
@@ -91,6 +95,10 @@ class DirectLoadBalancerService(
             case Success(id) => logging.info(this, s"recorded activation")
             case Failure(t)  => logging.error(this, s"failed to record activation")
         }
+    }
+    val collectLogs = (tid: TransactionId, container: Container, action: ExecutableWhiskAction) => {
+        implicit val transId = tid
+        logsProvider.collectLogs(container, action)
     }
     val prewarmKind = "nodejs:6"
     val prewarmExec = ExecManifest.runtimesManifest
@@ -113,7 +121,7 @@ class DirectLoadBalancerService(
 
     /** Creates a ContainerProxy Actor when being called. */
     val childFactory = (f: ActorRefFactory) =>
-        f.actorOf(ContainerProxy.props(containerFactory, ack, store, instance, 30.seconds))
+        f.actorOf(ContainerProxy.props(containerFactory, ack, store, collectLogs, instance, 30.seconds))
 
     //local pool feed
     //TODO: make maxContainers dynamic, based on containerfactory
@@ -163,7 +171,8 @@ object DirectLoadBalancerService {
     def requiredProperties = Map(
         WhiskConfig.dockerRegistry -> "",
         WhiskConfig.dockerImagePrefix -> "",
-        WhiskConfig.dockerImageTag -> "latest")
+        WhiskConfig.dockerImageTag -> "latest") ++
+            WhiskConfig.wskApiHost
 
 
 

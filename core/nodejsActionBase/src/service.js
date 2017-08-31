@@ -18,27 +18,45 @@
 // global variable to keep track of the current activationID
 var act_id = "unknown";
 function hook_stdout(callback) {
-    var old_stdout_write = process.stdout.write;
-    var old_stderr_write = process.stderr.write;
-    process.stdout.write = (function(write) {
-        return function(string, encoding, fd) {
-            var args = Array.prototype.slice.call(arguments);
-            args[0] = new Date().toISOString() + "," + act_id + "," + string;
-            write.apply(process.stdout, args);
-            callback(string, encoding, fd)
-        }
-    })(process.stdout.write)
-    process.stderr.write = (function(write) {
-        return function(string, encoding, fd) {
-            var args = Array.prototype.slice.call(arguments);
-            args[0] = new Date().toISOString() + "," + act_id + "," + string;
-            write.apply(process.stderr, args);
-        };
-    }(process.stderr.write));
-    return function() {
-        process.stdout.write = old_stdout_write;
-        process.stderr.write = old_stderr_write;
+  var old_stdout_write = process.stdout.write;
+  var old_stderr_write = process.stderr.write;
+  process.stdout.write = (function(write) {
+    return function(string, encoding, fd) {
+      var args = Array.prototype.slice.call(arguments);
+      var activation_id = act_id;
+      var log_timestamp = new Date().toISOString();
+      // to delete "\n" at the end of the log message
+      var log_message = string.substring(0, string.length - 1);
+      var json = {
+        "activation_id": activation_id,
+        "log_timestamp": log_timestamp,
+        "log_message": log_message
+      }
+      args[0] = JSON.stringify(json) + "\n";
+      write.apply(process.stdout, args);
+      callback(string, encoding, fd)
     }
+  })(process.stdout.write)
+  process.stderr.write = (function(write) {
+    return function(string, encoding, fd) {
+      var args = Array.prototype.slice.call(arguments);
+      var activation_id = act_id;
+      var log_timestamp = new Date().toISOString();
+      // to delete "\n" at the end of the log message
+      var log_message = string.substring(0, string.length - 1);
+      var json = {
+        "activation_id": activation_id,
+        "log_timestamp": log_timestamp,
+        "log_message": log_message
+      }
+      args[0] = JSON.stringify(json) + "\n";
+      write.apply(process.stderr, args);
+    };
+  }(process.stderr.write));
+  return function() {
+    process.stdout.write = old_stdout_write;
+    process.stderr.write = old_stderr_write;
+  }
 }
 var unhook = hook_stdout(function(string, encoding, fd) {});
 // --------------------------------------CHANGES!!------------------------------------------------------------
@@ -156,10 +174,10 @@ function NodeActionService(config, logger) {
             return Promise.reject(errorMessage(500, "Internal system error: container not ready, status: " + status));
         }
     };
-
+    var logFormatHint = "raw";
     function doInit(message) {
         userCodeRunner = new NodeActionRunner();
-
+        logFormatHint = message.logFormatHint || "raw"
         return userCodeRunner.init(message).then(function (result) {
             setStatus(Status.ready);
             // 'true' has no particular meaning here. The fact that the promise
