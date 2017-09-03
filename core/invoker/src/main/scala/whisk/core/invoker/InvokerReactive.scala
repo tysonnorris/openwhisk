@@ -19,7 +19,6 @@ package whisk.core.invoker
 
 import java.nio.charset.StandardCharsets
 import java.time.Instant
-import scala.concurrent.Await
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.Failure
@@ -44,8 +43,6 @@ import whisk.core.containerpool.ContainerPool
 import whisk.core.containerpool.ContainerProxy
 import whisk.core.containerpool.PrewarmingConfig
 import whisk.core.containerpool.Run
-import whisk.core.containerpool.docker.DockerClientWithFileAccess
-import whisk.core.containerpool.docker.RuncClient
 import whisk.core.database.NoDocumentException
 import whisk.core.entity._
 import whisk.core.entity.size._
@@ -72,31 +69,12 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
             consumer, maximumContainers, 500.milliseconds, processActivationMessage)
     })
 
-    /** Initialize container clients */
-    implicit val docker = new DockerClientWithFileAccess()(ec)
-    implicit val runc = new RuncClient(ec)
-
-    /** Cleans up all running wsk_ containers */
-    def cleanup() = {
-        val cleaning = docker.ps(Seq("name" -> s"wsk${instance.toInt}_"))(TransactionId.invokerNanny).flatMap { containers =>
-            val removals = containers.map { id =>
-                runc.resume(id)(TransactionId.invokerNanny).recoverWith {
-                    // Ignore resume failures and try to remove anyway
-                    case _ => Future.successful(())
-                }.flatMap {
-                    _ => docker.rm(id)(TransactionId.invokerNanny)
-                }
-            }
-            Future.sequence(removals)
-        }
-
-        Await.ready(cleaning, 30.seconds)
-    }
-    cleanup()
-    sys.addShutdownHook(cleanup())
 
     /** Factory used by the ContainerProxy to physically create a new container. */
-    val containerFactory = SpiLoader.get[ContainerFactoryProvider]().getContainerFactory(actorSystem, logging, config).createContainer _
+    val containerFactory = SpiLoader.get[ContainerFactoryProvider].getContainerFactory(actorSystem, logging, config, instance)
+    val containerFactoryFunction = containerFactory.createContainer _
+    containerFactory.cleanup()
+    sys.addShutdownHook(containerFactory.cleanup())
 
     /** Sends an active-ack. */
     val ack = (tid: TransactionId, activationResult: WhiskActivation, controllerInstance: InstanceId) => {
@@ -127,7 +105,7 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
     }
 
     /** Creates a ContainerProxy Actor when being called. */
-    val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(containerFactory, ack, store, instance))
+    val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(containerFactoryFunction, ack, store, instance))
 
     val prewarmKind = "nodejs:6"
     val prewarmExec = ExecManifest.runtimesManifest.resolveDefaultRuntime(prewarmKind).map { manifest =>

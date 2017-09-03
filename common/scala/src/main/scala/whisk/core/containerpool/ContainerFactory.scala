@@ -24,18 +24,22 @@ import whisk.common.TransactionId
 import whisk.core.WhiskConfig
 import whisk.core.entity.ByteSize
 import whisk.core.entity.ExecManifest
+import whisk.core.entity.InstanceId
 import whisk.spi.Spi
 
 /**
  * An abstraction for Container creation
  */
 trait ContainerFactory {
+    /** create a new Container */
     def createContainer(tid: TransactionId, name: String, actionImage: ExecManifest.ImageName, userProvidedImage: Boolean, memory: ByteSize)(implicit config: WhiskConfig, logging:Logging): Future[Container]
+    /** cleanup any remaining Containers; should block until complete; should ONLY be run at startup/shutdown */
+    def cleanup(): Unit
 }
 
 /**
  * An SPI for ContainerFactory creation
  */
 trait ContainerFactoryProvider extends Spi {
-    def getContainerFactory(actorSystem:ActorSystem, logging:Logging, config:WhiskConfig):ContainerFactory
+    def getContainerFactory(actorSystem: ActorSystem, logging: Logging, config: WhiskConfig, instance: InstanceId):ContainerFactory
 }
