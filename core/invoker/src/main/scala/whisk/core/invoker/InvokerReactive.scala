@@ -64,7 +64,7 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
     /** Initialize message consumers */
     val topic = s"invoker${instance.toInt}"
     val maximumContainers = config.invokerNumCore.toInt * config.invokerCoreShare.toInt
-    val msgProvider = SpiLoader.get[MessagingProvider]()
+    val msgProvider = SpiLoader.get[MessagingProvider]
     val consumer = msgProvider.getConsumer(config, "invokers", topic, maximumContainers, maxPollInterval = TimeLimit.MAX_DURATION + 1.minute)
 
     val activationFeed = actorSystem.actorOf(Props {
@@ -106,7 +106,7 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
             val msg = CompletionMessage(transid, res, instance)
             producer.send(s"completed${controllerInstance.toInt}", msg).andThen {
                 case Success(_) =>
-                    logging.info(this, s"posted ${if (recovery) "recovery" else ""} completion of activation ${activationResult.activationId}")
+                    logging.info(this, s"posted ${if (recovery) "recovery" else "completion"} of activation ${activationResult.activationId}")
             }
         }
 
@@ -120,7 +120,7 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
     val store = (tid: TransactionId, activation: WhiskActivation) => {
         implicit val transid = tid
         logging.info(this, "recording the activation result to the data store")
-        WhiskActivation.put(activationStore, activation).andThen {
+        WhiskActivation.put(activationStore, activation)(tid, notifier = None).andThen {
             case Success(id) => logging.info(this, s"recorded activation")
             case Failure(t)  => logging.error(this, s"failed to record activation")
         }
