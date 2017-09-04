@@ -15,14 +15,9 @@
  * limitations under the License.
  */
 
-package whisk.core.containerpool.docker
+package whisk.core.containerpool
 
 import java.nio.charset.StandardCharsets
-import scala.concurrent.duration.FiniteDuration
-import scala.concurrent.duration.DurationInt
-import scala.util.Failure
-import scala.util.Success
-import scala.util.Try
 import org.apache.commons.io.IOUtils
 import org.apache.http.HttpHeaders
 import org.apache.http.client.config.RequestConfig
@@ -32,12 +27,15 @@ import org.apache.http.client.utils.URIBuilder
 import org.apache.http.conn.HttpHostConnectException
 import org.apache.http.entity.StringEntity
 import org.apache.http.impl.client.HttpClientBuilder
+import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.FiniteDuration
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
 import spray.json._
 import whisk.core.entity.ActivationResponse._
 import whisk.core.entity.ByteSize
 import whisk.core.entity.size.SizeLong
-import scala.Left
-import scala.Right
 
 /**
  * This HTTP client is used only in the invoker to communicate with the action container.

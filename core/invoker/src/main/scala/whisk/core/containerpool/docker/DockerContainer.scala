@@ -18,30 +18,20 @@
 package whisk.core.containerpool.docker
 
 import java.nio.charset.StandardCharsets
-import java.time.Instant
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration._
 import scala.util.Failure
-import scala.util.Success
-import spray.json._
-import spray.json.DefaultJsonProtocol._
 import whisk.common.Logging
-import whisk.common.LoggingMarkers
 import whisk.common.TransactionId
-import whisk.core.containerpool.Interval
 import whisk.core.containerpool.BlackboxStartupError
 import whisk.core.containerpool.Container
+import whisk.core.containerpool.ContainerApi
 import whisk.core.containerpool.ContainerId
 import whisk.core.containerpool.ContainerIp
-import whisk.core.containerpool.InitializationError
 import whisk.core.containerpool.WhiskContainerStartupError
-import whisk.core.entity.ActivationResponse
 import whisk.core.entity.ByteSize
 import whisk.core.entity.size._
-import whisk.http.Messages
-import whisk.core.entity.ActivationResponse.ContainerConnectionError
-import whisk.core.entity.ActivationResponse.ContainerResponse
 
 object DockerContainer {
     /**
@@ -122,8 +112,9 @@ object DockerContainer {
  * @param id the id of the container
  * @param ip the ip of the container
  */
-class DockerContainer(val id: ContainerId, val ip: ContainerIp)(
-    implicit docker: DockerApiWithFileAccess, runc: RuncApi, ec: ExecutionContext, logger: Logging) extends Container with DockerActionLogDriver {
+class DockerContainer(protected val id: ContainerId, protected val ip: ContainerIp)(
+    implicit docker: DockerApiWithFileAccess, runc: RuncApi, protected val ec: ExecutionContext, protected val logging: Logging) extends Container
+        with DockerActionLogDriver with ContainerApi {
 
     /** The last read-position in the log file */
     private var logFileOffset = 0L
@@ -131,56 +122,11 @@ class DockerContainer(val id: ContainerId, val ip: ContainerIp)(
     protected val logsRetryCount = 15
     protected val logsRetryWait = 100.millis
 
-    /** HTTP connection to the container, will be lazily established by callContainer */
-    private var httpConnection: Option[HttpUtils] = None
-
     def suspend()(implicit transid: TransactionId): Future[Unit] = runc.pause(id)
     def resume()(implicit transid: TransactionId): Future[Unit] = runc.resume(id)
     def destroy()(implicit transid: TransactionId): Future[Unit] = {
-        httpConnection.foreach(_.close())
+        destroyApi()
         docker.rm(id)
-    }
-
-    def initialize(initializer: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[Interval] = {
-        val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_INIT, s"sending initialization to $id $ip")
-
-        val body = JsObject("value" -> initializer)
-        callContainer("/init", body, timeout, retry = true).andThen { // never fails
-            case Success(r: RunResult) =>
-                transid.finished(this, start.copy(start = r.interval.start), s"initialization result: ${r.toBriefString}", endTime = r.interval.end)
-            case Failure(t) =>
-                transid.failed(this, start, s"initializiation failed with $t")
-        }.flatMap { result =>
-            if (result.ok) {
-                Future.successful(result.interval)
-            } else if (result.interval.duration >= timeout) {
-                Future.failed(InitializationError(result.interval, ActivationResponse.applicationError(Messages.timedoutActivation(timeout, true))))
-            } else {
-                Future.failed(InitializationError(result.interval, ActivationResponse.processInitResponseContent(result.response, logger)))
-            }
-        }
-    }
-
-    def run(parameters: JsObject, environment: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[(Interval, ActivationResponse)] = {
-        val actionName = environment.fields.get("action_name").map(_.convertTo[String]).getOrElse("")
-        val start = transid.started(this, LoggingMarkers.INVOKER_ACTIVATION_RUN, s"sending arguments to $actionName at $id $ip")
-
-        val parameterWrapper = JsObject("value" -> parameters)
-        val body = JsObject(parameterWrapper.fields ++ environment.fields)
-        callContainer("/run", body, timeout, retry = false).andThen { // never fails
-            case Success(r: RunResult) =>
-                transid.finished(this, start.copy(start = r.interval.start), s"running result: ${r.toBriefString}", endTime = r.interval.end)
-            case Failure(t) =>
-                transid.failed(this, start, s"run failed with $t")
-        }.map { result =>
-            val response = if (result.interval.duration >= timeout) {
-                ActivationResponse.applicationError(Messages.timedoutActivation(timeout, false))
-            } else {
-                ActivationResponse.processRunResponseContent(result.response, logger)
-            }
-
-            (result.interval, response)
-        }
     }
 
     /**
@@ -213,7 +159,7 @@ class DockerContainer(val id: ContainerId, val ip: ContainerIp)(
                 val (isComplete, isTruncated, formattedLogs) = processJsonDriverLogContents(rawLog, waitForSentinel, limit)
 
                 if (retries > 0 && !isComplete && !isTruncated) {
-                    logger.info(this, s"log cursor advanced but missing sentinel, trying $retries more times")
+                    logging.info(this, s"log cursor advanced but missing sentinel, trying $retries more times")
                     Thread.sleep(logsRetryWait.toMillis)
                     readLogs(retries - 1)
                 } else {
@@ -222,40 +168,11 @@ class DockerContainer(val id: ContainerId, val ip: ContainerIp)(
                 }
             }.andThen {
                 case Failure(e) =>
-                    logger.error(this, s"Failed to obtain logs of ${id.asString}: ${e.getClass} - ${e.getMessage}")
+                    logging.error(this, s"Failed to obtain logs of ${id.asString}: ${e.getClass} - ${e.getMessage}")
             }
         }
 
         readLogs(logsRetryCount)
     }
-
-    /**
-     * Makes an HTTP request to the container.
-     *
-     * Note that `http.post` will not throw an exception, hence the generated Future cannot fail.
-     *
-     * @param path relative path to use in the http request
-     * @param body body to send
-     * @param timeout timeout of the request
-     * @param retry whether or not to retry the request
-     */
-    protected def callContainer(path: String, body: JsObject, timeout: FiniteDuration, retry: Boolean = false): Future[RunResult] = {
-        val started = Instant.now()
-        val http = httpConnection.getOrElse {
-            val conn = new HttpUtils(s"${ip.asString}:8080", timeout, 1.MB)
-            httpConnection = Some(conn)
-            conn
-        }
-        Future {
-            http.post(path, body, retry)
-        }.map { response =>
-            val finished = Instant.now()
-            RunResult(Interval(started, finished), response)
-        }
-    }
 }
 
-case class RunResult(interval: Interval, response: Either[ContainerConnectionError, ContainerResponse]) {
-    def ok = response.right.exists(_.ok)
-    def toBriefString = response.fold(_.toString, _.toString)
-}

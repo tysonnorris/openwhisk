@@ -17,8 +17,11 @@
 
 package whisk.core.containerpool
 
+import java.time.Instant
 import scala.concurrent.Future
+import scala.concurrent.duration.Duration
 import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration._
 import spray.json.JsObject
 import whisk.common.TransactionId
 import whisk.core.entity.ActivationResponse
@@ -38,8 +41,6 @@ case class ContainerIp(val asString: String, val port:Int = 8080) {
 }
 
 trait Container {
-    val id:ContainerId
-    val ip:ContainerIp
 
     /** Stops the container from consuming CPU cycles. */
     def suspend()(implicit transid: TransactionId): Future[Unit]
@@ -74,3 +75,16 @@ case class BlackboxStartupError(msg: String) extends ContainerStartupError(msg)
 
 /** Indicates an error while initializing a container */
 case class InitializationError(interval: Interval, response: ActivationResponse) extends Exception(response.toString)
+
+
+case class Interval(start: Instant, end: Instant) {
+    def duration = Duration.create(end.toEpochMilli() - start.toEpochMilli(), MILLISECONDS)
+}
+
+object Interval {
+    /** An interval starting now with zero duration. */
+    def zero = {
+        val now = Instant.now
+        Interval(now, now)
+    }
+}

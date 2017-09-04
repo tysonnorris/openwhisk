@@ -19,28 +19,23 @@ package whisk.core.containerpool.docker.test
 
 import java.time.Instant
 import java.nio.charset.StandardCharsets
-
 import scala.concurrent.duration._
-
 import org.junit.runner.RunWith
 import org.scalatest.BeforeAndAfter
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.FlatSpec
 import org.scalatest.Matchers
 import org.scalatest.junit.JUnitRunner
-
 import org.apache.http.localserver.LocalServerTestBase
 import org.apache.http.protocol.HttpRequestHandler
 import org.apache.http.HttpResponse
 import org.apache.http.HttpRequest
 import org.apache.http.protocol.HttpContext
 import org.apache.http.entity.StringEntity
-
 import spray.json.JsObject
-
+import whisk.core.containerpool.HttpUtils
 import whisk.core.entity.size._
 import whisk.core.entity.ActivationResponse._
-import whisk.core.containerpool.docker.HttpUtils
 
 /**
  * Unit tests for HttpUtils which communicate with containers.

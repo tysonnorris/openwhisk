@@ -18,18 +18,15 @@
 package whisk.core.containerpool.test
 
 import java.time.Instant
-
 import scala.concurrent.Future
 import scala.concurrent.Promise
 import scala.concurrent.duration._
-
 import org.junit.runner.RunWith
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.FlatSpecLike
 import org.scalatest.Matchers
 import org.scalatest.junit.JUnitRunner
-
 import akka.actor.ActorRef
 import akka.actor.ActorSystem
 import akka.actor.FSM
@@ -539,8 +536,5 @@ class ContainerProxyTests extends TestKit(ActorSystem("ContainerProxys"))
             logsCount += 1
             Future.successful(Vector("helloTest"))
         }
-
-        override val id: ContainerId = ContainerId("testcontainer")
-        override val ip: ContainerIp = ContainerIp("somehost", 8080)
     }
 }
