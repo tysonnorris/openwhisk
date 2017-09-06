@@ -41,24 +41,24 @@ case class ContainerIp(val asString: String, val port:Int = 8080) {
 }
 
 trait Container {
-
     /** Stops the container from consuming CPU cycles. */
     def suspend()(implicit transid: TransactionId): Future[Unit]
 
-    /** Dual of halt. */
-    def resume()(implicit transid: TransactionId): Future[Unit]
+  /** Dual of halt. */
+  def resume()(implicit transid: TransactionId): Future[Unit]
 
-    /** Completely destroys this instance of the container. */
-    def destroy()(implicit transid: TransactionId): Future[Unit]
+  /** Completely destroys this instance of the container. */
+  def destroy()(implicit transid: TransactionId): Future[Unit]
 
-    /** Initializes code in the container. */
-    def initialize(initializer: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[Interval]
+  /** Initializes code in the container. */
+  def initialize(initializer: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[Interval]
 
-    /** Runs code in the container. */
-    def run(parameters: JsObject, environment: JsObject, timeout: FiniteDuration)(implicit transid: TransactionId): Future[(Interval, ActivationResponse)]
+  /** Runs code in the container. */
+  def run(parameters: JsObject, environment: JsObject, timeout: FiniteDuration)(
+    implicit transid: TransactionId): Future[(Interval, ActivationResponse)]
 
-    /** Obtains logs up to a given threshold from the container. Optionally waits for a sentinel to appear. */
-    def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Future[Vector[String]]
+  /** Obtains logs up to a given threshold from the container. Optionally waits for a sentinel to appear. */
+  def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Future[Vector[String]]
 }
 
 /** Indicates a general error with the container */
@@ -78,13 +78,14 @@ case class InitializationError(interval: Interval, response: ActivationResponse)
 
 
 case class Interval(start: Instant, end: Instant) {
-    def duration = Duration.create(end.toEpochMilli() - start.toEpochMilli(), MILLISECONDS)
+  def duration = Duration.create(end.toEpochMilli() - start.toEpochMilli(), MILLISECONDS)
 }
 
 object Interval {
-    /** An interval starting now with zero duration. */
-    def zero = {
-        val now = Instant.now
-        Interval(now, now)
-    }
+
+  /** An interval starting now with zero duration. */
+  def zero = {
+    val now = Instant.now
+    Interval(now, now)
+  }
 }
