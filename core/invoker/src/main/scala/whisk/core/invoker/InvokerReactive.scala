@@ -54,7 +54,7 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
   logging: Logging) {
 
   implicit val ec = actorSystem.dispatcher
-    implicit val cfg = config
+  implicit val cfg = config
 
   /** Initialize needed databases */
   private val entityStore = WhiskEntityStore.datastore(config)
@@ -75,12 +75,12 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
     new MessageFeed("activation", logging, consumer, maximumContainers, 500.milliseconds, processActivationMessage)
   })
 
-
-    /** Factory used by the ContainerProxy to physically create a new container. */
-    val containerFactory = SpiLoader.get[ContainerFactoryProvider].getContainerFactory(actorSystem, logging, config, instance)
-        val containerFactoryFunction = containerFactory.createContainer _
-            containerFactory.cleanup()
-        sys.addShutdownHook(containerFactory.cleanup())
+  /** Factory used by the ContainerProxy to physically create a new container. */
+  val containerFactory =
+    SpiLoader.get[ContainerFactoryProvider].getContainerFactory(actorSystem, logging, config, instance)
+  val containerFactoryFunction = containerFactory.createContainer _
+  containerFactory.cleanup()
+  sys.addShutdownHook(containerFactory.cleanup())
 
   /** Sends an active-ack. */
   val ack = (tid: TransactionId,
@@ -117,7 +117,8 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
   }
 
   /** Creates a ContainerProxy Actor when being called. */
-  val childFactory = (f: ActorRefFactory) => f.actorOf(ContainerProxy.props(containerFactoryFunction, ack, store, instance))
+  val childFactory = (f: ActorRefFactory) =>
+    f.actorOf(ContainerProxy.props(containerFactoryFunction, ack, store, instance))
 
   val prewarmKind = "nodejs:6"
   val prewarmExec = ExecManifest.runtimesManifest

@@ -32,50 +32,62 @@ import whisk.core.entity.ExecManifest
 import whisk.core.entity.InstanceId
 import scala.concurrent.duration._
 
-class DockerContainerFactory(instance: InstanceId)(implicit ec: ExecutionContext, logging: Logging) extends ContainerFactory{
-    /** Initialize container clients */
-    implicit val docker = new DockerClientWithFileAccess()(ec)
-    implicit val runc = new RuncClient(ec)
+class DockerContainerFactory(instance: InstanceId)(implicit ec: ExecutionContext, logging: Logging)
+    extends ContainerFactory {
 
-    /** Create a container using docker cli */
-    override def createContainer(tid: TransactionId, name: String, actionImage: ExecManifest.ImageName, userProvidedImage: Boolean, memory: ByteSize)
-            (implicit config: WhiskConfig, logging: Logging): Future[Container] = {
-        val image = if (userProvidedImage) {
-            actionImage.publicImageName
-        } else {
-            actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
-        }
+  /** Initialize container clients */
+  implicit val docker = new DockerClientWithFileAccess()(ec)
+  implicit val runc = new RuncClient(ec)
 
-        DockerContainer.create(
-            tid,
-            image = image,
-            userProvidedImage = userProvidedImage,
-            memory = memory,
-            cpuShares = config.invokerCoreShare.toInt,
-            environment = Map("__OW_API_HOST" -> config.wskApiHost),
-            network = config.invokerContainerNetwork,
-            dnsServers = config.invokerContainerDns,
-            name = Some(name))
+  /** Create a container using docker cli */
+  override def createContainer(tid: TransactionId,
+                               name: String,
+                               actionImage: ExecManifest.ImageName,
+                               userProvidedImage: Boolean,
+                               memory: ByteSize)(implicit config: WhiskConfig, logging: Logging): Future[Container] = {
+    val image = if (userProvidedImage) {
+      actionImage.publicImageName
+    } else {
+      actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
     }
 
-    /** Cleans up all running wsk_ containers */
-    override def cleanup: Unit = {
-        val cleaning = docker.ps(Seq("name" -> s"wsk${instance.toInt}_"))(TransactionId.invokerNanny).flatMap { containers =>
-            val removals = containers.map { id =>
-            runc.resume(id)(TransactionId.invokerNanny).recoverWith {
-                // Ignore resume failures and try to remove anyway
-                case _ => Future.successful(())
-            }.flatMap {
-                _ => docker.rm(id)(TransactionId.invokerNanny)
+    DockerContainer.create(
+      tid,
+      image = image,
+      userProvidedImage = userProvidedImage,
+      memory = memory,
+      cpuShares = config.invokerCoreShare.toInt,
+      environment = Map("__OW_API_HOST" -> config.wskApiHost),
+      network = config.invokerContainerNetwork,
+      dnsServers = config.invokerContainerDns,
+      name = Some(name))
+  }
+
+  /** Cleans up all running wsk_ containers */
+  override def cleanup: Unit = {
+    val cleaning = docker.ps(Seq("name" -> s"wsk${instance.toInt}_"))(TransactionId.invokerNanny).flatMap {
+      containers =>
+        val removals = containers.map { id =>
+          runc
+            .resume(id)(TransactionId.invokerNanny)
+            .recoverWith {
+              // Ignore resume failures and try to remove anyway
+              case _ => Future.successful(())
+            }
+            .flatMap { _ =>
+              docker.rm(id)(TransactionId.invokerNanny)
             }
         }
-            Future.sequence(removals)
-        }
-        Await.ready(cleaning, 30.seconds)
+        Future.sequence(removals)
     }
+    Await.ready(cleaning, 30.seconds)
+  }
 }
 
 object DockerContainerFactoryProvider extends ContainerFactoryProvider {
-    override def getContainerFactory(actorSystem: ActorSystem, logging: Logging, config: WhiskConfig, instanceId: InstanceId): ContainerFactory =
-        new DockerContainerFactory(instanceId)(actorSystem.dispatcher, logging)
+  override def getContainerFactory(actorSystem: ActorSystem,
+                                   logging: Logging,
+                                   config: WhiskConfig,
+                                   instanceId: InstanceId): ContainerFactory =
+    new DockerContainerFactory(instanceId)(actorSystem.dispatcher, logging)
 }

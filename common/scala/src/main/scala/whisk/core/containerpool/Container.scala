@@ -32,17 +32,17 @@ import whisk.core.entity.ByteSize
  * for different container providers, but the implementation also needs to include
  * OpenWhisk specific behavior, especially for initialize and run.
  */
-
 case class ContainerId(val asString: String) {
-    require(asString.nonEmpty, "ContainerId must not be empty")
+  require(asString.nonEmpty, "ContainerId must not be empty")
 }
-case class ContainerIp(val asString: String, val port:Int = 8080) {
-    require(asString.nonEmpty, "ContainerIp must not be empty")
+case class ContainerIp(val asString: String, val port: Int = 8080) {
+  require(asString.nonEmpty, "ContainerIp must not be empty")
 }
 
 trait Container {
-    /** Stops the container from consuming CPU cycles. */
-    def suspend()(implicit transid: TransactionId): Future[Unit]
+
+  /** Stops the container from consuming CPU cycles. */
+  def suspend()(implicit transid: TransactionId): Future[Unit]
 
   /** Dual of halt. */
   def resume()(implicit transid: TransactionId): Future[Unit]
@@ -75,7 +75,6 @@ case class BlackboxStartupError(msg: String) extends ContainerStartupError(msg)
 
 /** Indicates an error while initializing a container */
 case class InitializationError(interval: Interval, response: ActivationResponse) extends Exception(response.toString)
-
 
 case class Interval(start: Instant, end: Instant) {
   def duration = Duration.create(end.toEpochMilli() - start.toEpochMilli(), MILLISECONDS)

@@ -123,8 +123,14 @@ object DockerContainer {
  * @param id the id of the container
  * @param ip the ip of the container
  */
-class DockerContainer(protected valid: ContainerId, protected valip: ContainerIp)(
-    implicit docker: DockerApiWithFileAccess, runc: RuncApi,protected val ec: ExecutionContext, protected val logging: Logging) extends Container with DockerActionLogDriver with ContainerApi{
+class DockerContainer(protected val id: ContainerId, protected val ip: ContainerIp)(
+  implicit docker: DockerApiWithFileAccess,
+  runc: RuncApi,
+  protected val ec: ExecutionContext,
+  protected val logging: Logging)
+    extends Container
+    with DockerActionLogDriver
+    with ContainerApi {
 
   /** The last read-position in the log file */
   private var logFileOffset = 0L
@@ -132,40 +138,36 @@ class DockerContainer(protected valid: ContainerId, protected valip: ContainerIp
   protected val logsRetryCount = 15
   protected val logsRetryWait = 100.millis
 
+  def suspend()(implicit transid: TransactionId): Future[Unit] = runc.pause(id)
+  def resume()(implicit transid: TransactionId): Future[Unit] = runc.resume(id)
+  def destroy()(implicit transid: TransactionId): Future[Unit] = {
+    destroyApi()
+    docker.rm(id)
+  }
 
-
-    def suspend()(implicit transid: TransactionId): Future[Unit] = runc.pause(id)
-    def resume()(implicit transid: TransactionId): Future[Unit] = runc.resume(id)
-    def destroy()(implicit transid: TransactionId): Future[Unit] = {
-        destroyApi()
-        docker.rm(id)
-    }
-
-
-
-    /**
-     * Obtains the container's stdout and stderr output and converts it to our own JSON format.
-     * At the moment, this is done by reading the internal Docker log file for the container.
-     * Said file is written by Docker's JSON log driver and has a "well-known" location and name.
-     *
-     * For warm containers, the container log file already holds output from
-     * previous activations that have to be skipped. For this reason, a starting position
-     * is kept and updated upon each invocation.
-     *
-     * If asked, check for sentinel markers - but exclude the identified markers from
-     * the result returned from this method.
-     *
-     * Only parses and returns as much logs as fit in the passed log limit.
-     * Even if the log limit is exceeded, advance the starting position for the next invocation
-     * behind the bytes most recently read - but don't actively read any more until sentinel
-     * markers have been found.
-     *
-     * @param limit the limit to apply to the log size
-     * @param waitForSentinel determines if the processor should wait for a sentinel to appear
-     *
-     * @return a vector of Strings with log lines in our own JSON format
-     */
-    def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Future[Vector[String]] = {
+  /**
+   * Obtains the container's stdout and stderr output and converts it to our own JSON format.
+   * At the moment, this is done by reading the internal Docker log file for the container.
+   * Said file is written by Docker's JSON log driver and has a "well-known" location and name.
+   *
+   * For warm containers, the container log file already holds output from
+   * previous activations that have to be skipped. For this reason, a starting position
+   * is kept and updated upon each invocation.
+   *
+   * If asked, check for sentinel markers - but exclude the identified markers from
+   * the result returned from this method.
+   *
+   * Only parses and returns as much logs as fit in the passed log limit.
+   * Even if the log limit is exceeded, advance the starting position for the next invocation
+   * behind the bytes most recently read - but don't actively read any more until sentinel
+   * markers have been found.
+   *
+   * @param limit the limit to apply to the log size
+   * @param waitForSentinel determines if the processor should wait for a sentinel to appear
+   *
+   * @return a vector of Strings with log lines in our own JSON format
+   */
+  def logs(limit: ByteSize, waitForSentinel: Boolean)(implicit transid: TransactionId): Future[Vector[String]] = {
 
     def readLogs(retries: Int): Future[Vector[String]] = {
       docker
@@ -175,23 +177,22 @@ class DockerContainer(protected valid: ContainerId, protected valip: ContainerIp
             new String(rawLogBytes.array, rawLogBytes.arrayOffset, rawLogBytes.position, StandardCharsets.UTF_8)
           val (isComplete, isTruncated, formattedLogs) = processJsonDriverLogContents(rawLog, waitForSentinel, limit)
 
-                if (retries > 0 && !isComplete && !isTruncated) {
-                    logging.info(this, s"log cursor advanced but missing sentinel, trying $retries more times")
-                    Thread.sleep(logsRetryWait.toMillis)
-                    readLogs(retries - 1)
-                } else {
-                    logFileOffset += rawLogBytes.position - rawLogBytes.arrayOffset
-                    Future.successful(formattedLogs)
-                }
-            }.andThen {
-                case Failure(e) =>
-                    logging.error(this, s"Failed to obtain logs of ${id.asString}: ${e.getClass} - ${e.getMessage}")
-            }
+          if (retries > 0 && !isComplete && !isTruncated) {
+            logging.info(this, s"log cursor advanced but missing sentinel, trying $retries more times")
+            Thread.sleep(logsRetryWait.toMillis)
+            readLogs(retries - 1)
+          } else {
+            logFileOffset += rawLogBytes.position - rawLogBytes.arrayOffset
+            Future.successful(formattedLogs)
+          }
         }
-
-        readLogs(logsRetryCount)
+        .andThen {
+          case Failure(e) =>
+            logging.error(this, s"Failed to obtain logs of ${id.asString}: ${e.getClass} - ${e.getMessage}")
+        }
     }
 
+    readLogs(logsRetryCount)
+  }
 
 }
-
