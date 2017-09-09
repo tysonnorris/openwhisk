@@ -6,9 +6,6 @@ apply from: '../../gradle/docker.gradle'
 
 repositories {
     mavenCentral()
-    maven {
-        url  "http://dl.bintray.com/adobe-apiplatform/maven"
-    }
 }
 
 dependencies {
@@ -32,9 +29,7 @@ dependencies {
     compile 'com.github.ben-manes.caffeine:caffeine:2.4.0'
     compile 'com.google.code.findbugs:jsr305:3.0.2'
     //for mesos
-    compile 'com.adobe.api.platform.runtime:mesos:0.0.1', {
-        exclude group: 'ch.qos.logback', module: 'logback-classic'
-    }
+    compile 'com.adobe.api.platform.runtime:mesos-actor:0.0.3'
 }
 
 tasks.withType(ScalaCompile) {

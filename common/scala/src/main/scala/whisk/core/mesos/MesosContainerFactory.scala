@@ -38,71 +38,88 @@ import whisk.spi.SpiFactory
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-class MesosContainerFactory(val actorSystem:ActorSystem, val logging:Logging) extends ContainerFactory {
-    //init mesos framework:
-    implicit val af:ActorRefFactory = actorSystem
-    implicit val ec:ExecutionContext = actorSystem.dispatcher
+class MesosContainerFactory(val actorSystem: ActorSystem, val logging: Logging)
+    extends ContainerFactory {
+  //init mesos framework:
+  implicit val af: ActorRefFactory = actorSystem
+  implicit val ec: ExecutionContext = actorSystem.dispatcher
 
-    val mesosMaster = actorSystem.settings.config.getString("whisk.mesos.master-url")
-    val maxConcurrency = actorSystem.settings.config.getInt("whisk.mesos.max-concurrent")
-    logging.info(this, s"subscribing to mesos master at ${mesosMaster}")
+  val mesosMaster =
+    actorSystem.settings.config.getString("whisk.mesos.master-url")
+  val maxConcurrency =
+    actorSystem.settings.config.getInt("whisk.mesos.max-concurrent")
+  logging.info(this, s"subscribing to mesos master at ${mesosMaster}")
 
-    val mesosClientActor = actorSystem.actorOf(MesosClient.props(
-        "whisk-loadbalancer-" + UUID(),
-        "whisk-loadbalancer-framework",
-        mesosMaster,
-        "*",
-        taskBuilder = ActionTaskBuilder
+  val mesosClientActor = actorSystem.actorOf(
+    MesosClient.props(
+      "whisk-loadbalancer-" + UUID(),
+      "whisk-loadbalancer-framework",
+      mesosMaster,
+      "*",
+      2.minutes
     ))
 
-    mesosClientActor ! Subscribe
+  mesosClientActor ! Subscribe
 
-    //handle shutdown
-    sys.addShutdownHook({
-        val complete: Future[Any] = mesosClientActor.ask(Teardown)(20.seconds)
-        Await.result(complete, 25.seconds)
-        logging.info(this, "teardown completed!")
-    })
+  //handle shutdown
+  sys.addShutdownHook({
+    val complete: Future[Any] = mesosClientActor.ask(Teardown)(20.seconds)
+    Await.result(complete, 25.seconds)
+    logging.info(this, "teardown completed!")
+  })
 
-
-
-
-    override def createContainer(tid: TransactionId, name: String, actionImage: ExecManifest.ImageName, userProvidedImage: Boolean, memory: ByteSize)(implicit config: WhiskConfig, logging:Logging): Future[Container] = {
-        //TODO: install all images in adobe
-        val image = if (userProvidedImage) {
-            logging.info(this, "using public image")
-            actionImage.publicImageName
-        } else {
-            logging.info(this, "using local image")
-            actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
-        }
-
-        logging.info(this, s"using Mesos to create a container with image ${image}...")
-        val startingTask = MesosTask.create(
-            mesosClientActor,
-            tid,
-            image = image,
-            userProvidedImage = userProvidedImage,
-            memory = memory,
-            cpuShares = 0, //OldContainerPool.cpuShare(config),
-            environment = Map("__OW_API_HOST" -> config.wskApiHost),
-            network = config.invokerContainerNetwork,
-            dnsServers = config.invokerContainerDns,
-            name = Some(name))
-
-        logging.info(this, s"created task is completed??? ${startingTask.isCompleted}")
-        startingTask.map(runningTask => {
-            logging.info(this, "returning running task")
-            runningTask
-        })
+  override def createContainer(tid: TransactionId,
+                               name: String,
+                               actionImage: ExecManifest.ImageName,
+                               userProvidedImage: Boolean,
+                               memory: ByteSize)(
+      implicit config: WhiskConfig,
+      logging: Logging): Future[Container] = {
+    //TODO: install all images in adobe
+    val image = if (userProvidedImage) {
+      logging.info(this, "using public image")
+      actionImage.publicImageName
+    } else {
+      logging.info(this, "using local image")
+      actionImage.localImageName(config.dockerRegistry,
+                                 config.dockerImagePrefix,
+                                 Some(config.dockerImageTag))
     }
+
+    logging.info(this,
+                 s"using Mesos to create a container with image ${image}...")
+    val startingTask = MesosTask.create(
+      mesosClientActor,
+      tid,
+      image = image,
+      userProvidedImage = userProvidedImage,
+      memory = memory,
+      cpuShares = 0, //OldContainerPool.cpuShare(config),
+      environment = Map("__OW_API_HOST" -> config.wskApiHost),
+      network = config.invokerContainerNetwork,
+      dnsServers = config.invokerContainerDns,
+      name = Some(name)
+    )
+
+    logging.info(this,
+                 s"created task is completed??? ${startingTask.isCompleted}")
+    startingTask.map(runningTask => {
+      logging.info(this, "returning running task")
+      runningTask
+    })
+  }
 
 }
 
 class MesosContainerFactoryProvider extends ContainerFactoryProvider {
-    override def getContainerFactory(actorSystem: ActorSystem, logging:Logging, config:WhiskConfig): ContainerFactory = new MesosContainerFactory(actorSystem, logging)
+  override def getContainerFactory(actorSystem: ActorSystem,
+                                   logging: Logging,
+                                   config: WhiskConfig): ContainerFactory =
+    new MesosContainerFactory(actorSystem, logging)
 }
 
-object MesosContainerFactoryProvider extends SpiFactory[ContainerFactoryProvider] {
-    override def apply(dependencies: Dependencies): ContainerFactoryProvider = new MesosContainerFactoryProvider()
+object MesosContainerFactoryProvider
+    extends SpiFactory[ContainerFactoryProvider] {
+  override def apply(dependencies: Dependencies): ContainerFactoryProvider =
+    new MesosContainerFactoryProvider()
 }

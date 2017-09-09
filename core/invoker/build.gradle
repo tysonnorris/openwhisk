@@ -8,9 +8,6 @@ distDocker.dependsOn ':common:scala:distDocker', 'distTar'
 
 repositories {
     mavenCentral()
-    maven {
-        url  "http://dl.bintray.com/adobe-apiplatform/maven"
-    }
 }
 
 dependencies {
