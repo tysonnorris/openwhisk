@@ -18,6 +18,7 @@
 package whisk.core.containerpool.docker
 
 import akka.actor.ActorSystem
+import scala.collection.mutable
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -32,7 +33,7 @@ import whisk.core.entity.ExecManifest
 import whisk.core.entity.InstanceId
 import scala.concurrent.duration._
 
-class DockerContainerFactory(instance: InstanceId, dockerRunParameters: Map[String, String])(
+class DockerContainerFactory(instance: InstanceId, dockerRunParameters: Map[String, mutable.Set[String]])(
   implicit ec: ExecutionContext,
   logging: Logging)
     extends ContainerFactory {
@@ -92,6 +93,6 @@ object DockerContainerFactoryProvider extends ContainerFactoryProvider {
                                    logging: Logging,
                                    config: WhiskConfig,
                                    instanceId: InstanceId,
-                                   dockerRunParameters: Map[String, String]): ContainerFactory =
+                                   dockerRunParameters: Map[String, mutable.Set[String]]): ContainerFactory =
     new DockerContainerFactory(instanceId, dockerRunParameters)(actorSystem.dispatcher, logging)
 }

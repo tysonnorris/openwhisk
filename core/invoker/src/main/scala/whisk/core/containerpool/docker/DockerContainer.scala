@@ -18,6 +18,7 @@
 package whisk.core.containerpool.docker
 
 import java.nio.charset.StandardCharsets
+import scala.collection.mutable
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -59,15 +60,22 @@ object DockerContainer {
              network: String = "bridge",
              dnsServers: Seq[String] = Seq(),
              name: Option[String] = None,
-             dockerRunParameters: Map[String, String] = Map())(implicit docker: DockerApiWithFileAccess,
-                                                               runc: RuncApi,
-                                                               ec: ExecutionContext,
-                                                               log: Logging): Future[DockerContainer] = {
+             dockerRunParameters: Map[String, mutable.Set[String]] = Map())(implicit docker: DockerApiWithFileAccess,
+                                                                            runc: RuncApi,
+                                                                            ec: ExecutionContext,
+                                                                            log: Logging): Future[DockerContainer] = {
     implicit val tid = transid
 
     val environmentArgs = environment.flatMap {
       case (key, value) => Seq("-e", s"$key=$value")
     }
+
+    val params = dockerRunParameters.flatMap {
+      case (key, valueList) =>
+        valueList.map {
+          case (value) => Seq(key, value)
+        }
+    }.flatten
 
     val args = Seq(
       "--cpu-shares",
@@ -80,9 +88,7 @@ object DockerContainer {
       network) ++
       environmentArgs ++
       name.map(n => Seq("--name", n)).getOrElse(Seq.empty) ++
-      dockerRunParameters.flatMap {
-        case (key, value) => Seq(key, value)
-      }
+      params
     val pulled = if (userProvidedImage) {
       docker.pull(image).recoverWith {
         case _ => Future.failed(BlackboxStartupError(s"Failed to pull container image '${image}'."))

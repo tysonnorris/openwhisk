@@ -18,6 +18,7 @@
 package whisk.core.containerpool
 
 import akka.actor.ActorSystem
+import scala.collection.mutable
 import scala.concurrent.Future
 import whisk.common.Logging
 import whisk.common.TransactionId
@@ -51,5 +52,5 @@ trait ContainerFactoryProvider extends Spi {
                           logging: Logging,
                           config: WhiskConfig,
                           instance: InstanceId,
-                          dockerRunParameters: Map[String, String]): ContainerFactory
+                          dockerRunParameters: Map[String, mutable.Set[String]]): ContainerFactory
 }
