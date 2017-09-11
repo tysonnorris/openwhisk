@@ -31,37 +31,53 @@ import whisk.core.entity.ExecManifest
 import whisk.spi.Dependencies
 import whisk.spi.SpiFactory
 
-class DockerContainerFactory()(implicit ec: ExecutionContext, logging: Logging) extends ContainerFactory{
-    /** Initialize container clients */
-    implicit val docker = new DockerClientWithFileAccess()(ec)
-    implicit val runc = new RuncClient(ec)
+class DockerContainerFactory()(implicit ec: ExecutionContext, logging: Logging)
+    extends ContainerFactory {
 
-    override def createContainer(tid: TransactionId, name: String, actionImage: ExecManifest.ImageName, userProvidedImage: Boolean, memory: ByteSize)
-            (implicit config: WhiskConfig, logging: Logging): Future[Container] = {
-        val image = if (userProvidedImage) {
-            actionImage.publicImageName
-        } else {
-            actionImage.localImageName(config.dockerRegistry, config.dockerImagePrefix, Some(config.dockerImageTag))
-        }
+  /** Initialize container clients */
+  implicit val docker = new DockerClientWithFileAccess()(ec)
+  implicit val runc = new RuncClient(ec)
 
-        DockerContainer.create(
-            tid,
-            image = image,
-            userProvidedImage = userProvidedImage,
-            memory = memory,
-            cpuShares = config.invokerCoreShare.toInt,
-            environment = Map("__OW_API_HOST" -> config.wskApiHost),
-            network = config.invokerContainerNetwork,
-            dnsServers = config.invokerContainerDns,
-            name = Some(name))
+  override def createContainer(tid: TransactionId,
+                               name: String,
+                               actionImage: ExecManifest.ImageName,
+                               userProvidedImage: Boolean,
+                               memory: ByteSize)(
+      implicit config: WhiskConfig,
+      logging: Logging): Future[Container] = {
+    val image = if (userProvidedImage) {
+      actionImage.publicImageName
+    } else {
+      actionImage.localImageName(config.dockerRegistry,
+                                 config.dockerImagePrefix,
+                                 Some(config.dockerImageTag))
     }
+
+    DockerContainer.create(
+      tid,
+      image = image,
+      userProvidedImage = userProvidedImage,
+      memory = memory,
+      cpuShares = config.invokerCoreShare.toInt,
+      environment = Map("__OW_API_HOST" -> config.wskApiHost),
+      network = config.invokerContainerNetwork,
+      dnsServers = config.invokerContainerDns,
+      name = Some(name)
+    )
+  }
 }
 
 class DockerContainerFactoryProvider extends ContainerFactoryProvider {
-    override def getContainerFactory(actorSystem: ActorSystem, logging: Logging, config: WhiskConfig): ContainerFactory =
-        new DockerContainerFactory()(actorSystem.dispatcher, logging)
+  override def getContainerFactory(
+      actorSystem: ActorSystem,
+      logging: Logging,
+      config: WhiskConfig,
+      parameters: Map[String, String]): ContainerFactory =
+    new DockerContainerFactory()(actorSystem.dispatcher, logging)
 }
 
-object DockerContainerFactoryProvider extends SpiFactory[ContainerFactoryProvider] {
-    override def apply(dependencies: Dependencies): ContainerFactoryProvider = new DockerContainerFactoryProvider()
+object DockerContainerFactoryProvider
+    extends SpiFactory[ContainerFactoryProvider] {
+  override def apply(dependencies: Dependencies): ContainerFactoryProvider =
+    new DockerContainerFactoryProvider()
 }

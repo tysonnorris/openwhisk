@@ -1,7 +1,6 @@
 package whisk.core.mesos
 
 import akka.actor.ActorRef
-import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.client.RequestBuilding.Post
@@ -34,10 +33,7 @@ import whisk.core.containerpool.ContainerIp
 import whisk.core.containerpool.InitializationError
 import whisk.core.containerpool.Interval
 import whisk.core.containerpool.RunResult
-import whisk.core.containerpool.logging.LogStoreProvider
 import whisk.core.entity.ActivationResponse.ConnectionError
-import whisk.spi.SpiLoader
-//import spray.http.HttpRequest
 import scala.collection.JavaConverters._
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext
@@ -67,9 +63,9 @@ object MesosTask {
   val counter = new Counter()
   val startTime = Instant.now.getEpochSecond
   //implicit var ref:ActorRefFactory
-  implicit val system = ActorSystem("spray-api-service")
-  implicit val ec = system.dispatcher
-  private val logStore = SpiLoader.get[LogStoreProvider]().logStore(system)
+  //implicit val system = ActorSystem("spray-api-service")
+//  implicit val ec = system.dispatcher
+//  private val logStore = SpiLoader.get[LogStoreProvider]().logStore(system)
 
   def create(mesosClientActor: ActorRef,
              transid: TransactionId,
@@ -80,27 +76,12 @@ object MesosTask {
              environment: Map[String, String] = Map(),
              network: String = "bridge",
              dnsServers: Seq[String] = Seq(),
-             name: Option[String] = None)(
+             name: Option[String] = None,
+             parameters: Map[String, String] = Map())(
       implicit ec: ExecutionContext,
       log: Logging,
-      af: ActorRefFactory): Future[Container] = {
+      as: ActorSystem): Future[Container] = {
     implicit val tid = transid
-
-    //TODO: DRY this with DockerContainer.create
-    val dockerRunParameters = Map(
-      "--cap-drop" -> "NET_RAW",
-      "--cap-drop" -> "NET_ADMIN",
-      "--ulimit" -> "nofile=1024:1024",
-      "--pids-limit" -> "1024",
-//      "--cpu-shares"-> cpuShares.toString,
-//      "--memory"-> s"${memory.toMB}m",
-      "--memory-swap" -> s"${memory.toMB}m"
-    ) ++
-//      "--network", network) ++
-      dnsServers.map(d => "dns" -> d).toMap ++
-      logStore.containerParameters
-//            environmentArgs ++
-//            name.map(n => Seq("--name", n)).getOrElse(Seq.empty)
 
     log.info(this, s"creating task for image ${image}...")
 
@@ -117,7 +98,7 @@ object MesosTask {
                            Some(0),
                            true,
                            Bridge,
-                           dockerRunParameters,
+                           parameters,
                            environment)
 
     val launched: Future[Running] =

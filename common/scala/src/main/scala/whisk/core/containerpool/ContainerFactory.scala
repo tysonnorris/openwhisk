@@ -27,15 +27,23 @@ import whisk.core.entity.ExecManifest
 import whisk.spi.Spi
 
 /**
- * An abstraction for Container creation
- */
+  * An abstraction for Container creation
+  */
 trait ContainerFactory {
-    def createContainer(tid: TransactionId, name: String, actionImage: ExecManifest.ImageName, userProvidedImage: Boolean, memory: ByteSize)(implicit config: WhiskConfig, logging:Logging): Future[Container]
+  def createContainer(tid: TransactionId,
+                      name: String,
+                      actionImage: ExecManifest.ImageName,
+                      userProvidedImage: Boolean,
+                      memory: ByteSize)(implicit config: WhiskConfig,
+                                        logging: Logging): Future[Container]
 }
 
 /**
- * An SPI for ContainerFactory creation
- */
+  * An SPI for ContainerFactory creation
+  */
 trait ContainerFactoryProvider extends Spi {
-    def getContainerFactory(actorSystem:ActorSystem, logging:Logging, config:WhiskConfig):ContainerFactory
+  def getContainerFactory(actorSystem: ActorSystem,
+                          logging: Logging,
+                          config: WhiskConfig,
+                          parameters: Map[String, String]): ContainerFactory
 }

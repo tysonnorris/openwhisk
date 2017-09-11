@@ -1,6 +1,5 @@
 package whisk.core.mesos
 
-import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
 import akka.pattern.ask
 import com.adobe.api.platform.runtime.mesos.MesosClient
@@ -16,11 +15,13 @@ import whisk.core.WhiskConfig
 import whisk.core.containerpool.Container
 import whisk.core.containerpool.ContainerFactory
 import whisk.core.containerpool.ContainerFactoryProvider
+import whisk.core.containerpool.logging.LogStoreProvider
 import whisk.core.entity.ByteSize
 import whisk.core.entity.ExecManifest
 import whisk.core.entity.UUID
 import whisk.spi.Dependencies
 import whisk.spi.SpiFactory
+import whisk.spi.SpiLoader
 
 /*
  * Licensed to the Apache Software Foundation (ASF) under one or more
@@ -38,12 +39,15 @@ import whisk.spi.SpiFactory
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-class MesosContainerFactory(val actorSystem: ActorSystem, val logging: Logging)
+class MesosContainerFactory(val actorSystem: ActorSystem,
+                            val logging: Logging,
+                            parameters: Map[String, String])
     extends ContainerFactory {
   //init mesos framework:
-  implicit val af: ActorRefFactory = actorSystem
+  implicit val as: ActorSystem = actorSystem
   implicit val ec: ExecutionContext = actorSystem.dispatcher
-
+  val logStore =
+    SpiLoader.get[LogStoreProvider]().logStore(actorSystem)
   val mesosMaster =
     actorSystem.settings.config.getString("whisk.mesos.master-url")
   val maxConcurrency =
@@ -98,7 +102,8 @@ class MesosContainerFactory(val actorSystem: ActorSystem, val logging: Logging)
       environment = Map("__OW_API_HOST" -> config.wskApiHost),
       network = config.invokerContainerNetwork,
       dnsServers = config.invokerContainerDns,
-      name = Some(name)
+      name = Some(name),
+      parameters
     )
 
     logging.info(this,
@@ -112,10 +117,12 @@ class MesosContainerFactory(val actorSystem: ActorSystem, val logging: Logging)
 }
 
 class MesosContainerFactoryProvider extends ContainerFactoryProvider {
-  override def getContainerFactory(actorSystem: ActorSystem,
-                                   logging: Logging,
-                                   config: WhiskConfig): ContainerFactory =
-    new MesosContainerFactory(actorSystem, logging)
+  override def getContainerFactory(
+      actorSystem: ActorSystem,
+      logging: Logging,
+      config: WhiskConfig,
+      parameters: Map[String, String]): ContainerFactory =
+    new MesosContainerFactory(actorSystem, logging, parameters)
 }
 
 object MesosContainerFactoryProvider
