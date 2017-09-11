@@ -18,7 +18,9 @@
 package whisk.core.containerpool
 
 import akka.actor.ActorSystem
-import scala.collection.mutable
+import scala.collection.mutable.HashMap
+import scala.collection.mutable.MultiMap
+import scala.collection.mutable.Set
 import scala.concurrent.Future
 import whisk.common.Logging
 import whisk.common.TransactionId
@@ -43,6 +45,20 @@ trait ContainerFactory {
   /** cleanup any remaining Containers; should block until complete; should ONLY be run at startup/shutdown */
   def cleanup(): Unit
 }
+object ContainerFactory {
+
+  /** build the parameters for docker run */
+  def dockerRunParameters(config: WhiskConfig): MultiMap[String, String] = {
+    val dockerRunParameters = new HashMap[String, Set[String]] with MultiMap[String, String]
+    dockerRunParameters.addBinding("--cap-drop", "NET_RAW")
+    dockerRunParameters.addBinding("--cap-drop", "NET_ADMIN")
+    dockerRunParameters.addBinding("--ulimit", "nofile=1024:1024")
+    dockerRunParameters.addBinding("--pids-limit", "1024")
+    val dnsServers = config.invokerContainerDns
+    dnsServers.map(d => dockerRunParameters.addBinding("--dns", d))
+    dockerRunParameters
+  }
+}
 
 /**
  * An SPI for ContainerFactory creation
@@ -51,6 +67,5 @@ trait ContainerFactoryProvider extends Spi {
   def getContainerFactory(actorSystem: ActorSystem,
                           logging: Logging,
                           config: WhiskConfig,
-                          instance: InstanceId,
-                          dockerRunParameters: Map[String, mutable.Set[String]]): ContainerFactory
+                          instance: InstanceId): ContainerFactory
 }

@@ -18,7 +18,7 @@
 package whisk.core.containerpool.docker
 
 import java.nio.charset.StandardCharsets
-import scala.collection.mutable
+import scala.collection.mutable.MultiMap
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -60,10 +60,10 @@ object DockerContainer {
              network: String = "bridge",
              dnsServers: Seq[String] = Seq(),
              name: Option[String] = None,
-             dockerRunParameters: Map[String, mutable.Set[String]] = Map())(implicit docker: DockerApiWithFileAccess,
-                                                                            runc: RuncApi,
-                                                                            ec: ExecutionContext,
-                                                                            log: Logging): Future[DockerContainer] = {
+             dockerRunParameters: MultiMap[String, String])(implicit docker: DockerApiWithFileAccess,
+                                                            runc: RuncApi,
+                                                            ec: ExecutionContext,
+                                                            log: Logging): Future[DockerContainer] = {
     implicit val tid = transid
 
     val environmentArgs = environment.flatMap {

@@ -18,7 +18,6 @@
 package whisk.core.containerpool.docker
 
 import akka.actor.ActorSystem
-import scala.collection.mutable
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -33,14 +32,14 @@ import whisk.core.entity.ExecManifest
 import whisk.core.entity.InstanceId
 import scala.concurrent.duration._
 
-class DockerContainerFactory(instance: InstanceId, dockerRunParameters: Map[String, mutable.Set[String]])(
-  implicit ec: ExecutionContext,
-  logging: Logging)
+class DockerContainerFactory(config: WhiskConfig, instance: InstanceId)(implicit ec: ExecutionContext, logging: Logging)
     extends ContainerFactory {
 
   /** Initialize container clients */
   implicit val docker = new DockerClientWithFileAccess()(ec)
   implicit val runc = new RuncClient(ec)
+
+  val parameters = ContainerFactory.dockerRunParameters(config)
 
   /** Create a container using docker cli */
   override def createContainer(tid: TransactionId,
@@ -64,7 +63,7 @@ class DockerContainerFactory(instance: InstanceId, dockerRunParameters: Map[Stri
       network = config.invokerContainerNetwork,
       dnsServers = config.invokerContainerDns,
       name = Some(name),
-      dockerRunParameters)
+      parameters)
   }
 
   /** Cleans up all running wsk_ containers */
@@ -92,7 +91,6 @@ object DockerContainerFactoryProvider extends ContainerFactoryProvider {
   override def getContainerFactory(actorSystem: ActorSystem,
                                    logging: Logging,
                                    config: WhiskConfig,
-                                   instanceId: InstanceId,
-                                   dockerRunParameters: Map[String, mutable.Set[String]]): ContainerFactory =
-    new DockerContainerFactory(instanceId, dockerRunParameters)(actorSystem.dispatcher, logging)
+                                   instanceId: InstanceId): ContainerFactory =
+    new DockerContainerFactory(config, instanceId)(actorSystem.dispatcher, logging)
 }

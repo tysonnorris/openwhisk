@@ -27,9 +27,6 @@ import org.apache.kafka.common.errors.RecordTooLargeException
 import akka.actor.ActorRefFactory
 import akka.actor.ActorSystem
 import akka.actor.Props
-import scala.collection.mutable.Set
-import scala.collection.mutable.MultiMap
-import scala.collection.mutable.HashMap
 import spray.json._
 import spray.json.DefaultJsonProtocol._
 import whisk.common.Logging
@@ -78,23 +75,11 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
     new MessageFeed("activation", logging, consumer, maximumContainers, 500.milliseconds, processActivationMessage)
   })
 
-  //docker parameters that apply to all containers (does not include: cpu, memory, network, environment)
-  val dnsServers = config.invokerContainerDns
-
-  val dockerRunParameters = new HashMap[String, Set[String]] with MultiMap[String, String]
-
-  dockerRunParameters.addBinding("--cap-drop", "NET_RAW")
-  dockerRunParameters.addBinding("--cap-drop", "NET_ADMIN")
-  dockerRunParameters.addBinding("--ulimit", "nofile=1024:1024")
-  dockerRunParameters.addBinding("--pids-limit", "1024")
-
-  dnsServers.map(d => dockerRunParameters.addBinding("--dns", d))
-
   /** Factory used by the ContainerProxy to physically create a new container. */
   val containerFactory =
     SpiLoader
       .get[ContainerFactoryProvider]
-      .getContainerFactory(actorSystem, logging, config, instance, dockerRunParameters.toMap)
+      .getContainerFactory(actorSystem, logging, config, instance)
   val containerFactoryFunction = containerFactory.createContainer _
   containerFactory.cleanup()
   sys.addShutdownHook(containerFactory.cleanup())

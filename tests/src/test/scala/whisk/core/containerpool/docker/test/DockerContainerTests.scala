@@ -21,13 +21,11 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.time.Instant
-
 import scala.collection.mutable
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-
 import org.junit.runner.RunWith
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.BeforeAndAfterEach
@@ -35,12 +33,12 @@ import org.scalatest.FlatSpec
 import org.scalatest.Inspectors._
 import org.scalatest.junit.JUnitRunner
 import org.scalatest.Matchers
-
 import common.StreamLogging
 import spray.json._
 import whisk.common.LoggingMarkers._
 import whisk.common.LogMarker
 import whisk.common.TransactionId
+import whisk.core.WhiskConfig
 import whisk.core.containerpool._
 import whisk.core.containerpool.docker._
 import whisk.core.entity.ActivationResponse
@@ -91,6 +89,7 @@ class DockerContainerTests extends FlatSpec with Matchers with MockFactory with 
   behavior of "DockerContainer"
 
   implicit val transid = TransactionId.testing
+  val parameters = ContainerFactory.dockerRunParameters(new WhiskConfig(Map()))
 
   /*
    * CONTAINER CREATION
@@ -105,7 +104,6 @@ class DockerContainerTests extends FlatSpec with Matchers with MockFactory with 
     val environment = Map("test" -> "hi")
     val network = "testwork"
     val name = "myContainer"
-
     val container = DockerContainer.create(
       transid = transid,
       image = image,
@@ -113,7 +111,8 @@ class DockerContainerTests extends FlatSpec with Matchers with MockFactory with 
       cpuShares = cpuShares,
       environment = environment,
       network = network,
-      name = Some(name))
+      name = Some(name),
+      dockerRunParameters = parameters)
 
     await(container)
 
@@ -145,7 +144,11 @@ class DockerContainerTests extends FlatSpec with Matchers with MockFactory with 
     implicit val docker = new TestDockerClient
     implicit val runc = stub[RuncApi]
 
-    val container = DockerContainer.create(transid = transid, image = "image", userProvidedImage = true)
+    val container = DockerContainer.create(
+      transid = transid,
+      image = "image",
+      userProvidedImage = true,
+      dockerRunParameters = parameters)
     await(container)
 
     docker.pulls should have size 1
@@ -164,7 +167,7 @@ class DockerContainerTests extends FlatSpec with Matchers with MockFactory with 
     }
     implicit val runc = stub[RuncApi]
 
-    val container = DockerContainer.create(transid = transid, image = "image")
+    val container = DockerContainer.create(transid = transid, image = "image", dockerRunParameters = parameters)
     a[WhiskContainerStartupError] should be thrownBy await(container)
 
     docker.pulls should have size 0
@@ -183,7 +186,11 @@ class DockerContainerTests extends FlatSpec with Matchers with MockFactory with 
     }
     implicit val runc = stub[RuncApi]
 
-    val container = DockerContainer.create(transid = transid, image = "image", userProvidedImage = true)
+    val container = DockerContainer.create(
+      transid = transid,
+      image = "image",
+      userProvidedImage = true,
+      dockerRunParameters = parameters)
     a[WhiskContainerStartupError] should be thrownBy await(container)
 
     docker.pulls should have size 1
@@ -202,7 +209,11 @@ class DockerContainerTests extends FlatSpec with Matchers with MockFactory with 
     }
     implicit val runc = stub[RuncApi]
 
-    val container = DockerContainer.create(transid = transid, image = "image", userProvidedImage = true)
+    val container = DockerContainer.create(
+      transid = transid,
+      image = "image",
+      userProvidedImage = true,
+      dockerRunParameters = parameters)
     a[WhiskContainerStartupError] should be thrownBy await(container)
 
     docker.pulls should have size 1
@@ -220,7 +231,11 @@ class DockerContainerTests extends FlatSpec with Matchers with MockFactory with 
     }
     implicit val runc = stub[RuncApi]
 
-    val container = DockerContainer.create(transid = transid, image = "image", userProvidedImage = true)
+    val container = DockerContainer.create(
+      transid = transid,
+      image = "image",
+      userProvidedImage = true,
+      dockerRunParameters = parameters)
     a[BlackboxStartupError] should be thrownBy await(container)
 
     docker.pulls should have size 1
