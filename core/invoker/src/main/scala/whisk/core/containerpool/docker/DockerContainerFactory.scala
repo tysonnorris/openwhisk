@@ -32,7 +32,9 @@ import whisk.core.entity.ExecManifest
 import whisk.core.entity.InstanceId
 import scala.concurrent.duration._
 
-class DockerContainerFactory(instance: InstanceId)(implicit ec: ExecutionContext, logging: Logging)
+class DockerContainerFactory(instance: InstanceId, dockerRunParameters: Map[String, String])(
+  implicit ec: ExecutionContext,
+  logging: Logging)
     extends ContainerFactory {
 
   /** Initialize container clients */
@@ -60,7 +62,8 @@ class DockerContainerFactory(instance: InstanceId)(implicit ec: ExecutionContext
       environment = Map("__OW_API_HOST" -> config.wskApiHost),
       network = config.invokerContainerNetwork,
       dnsServers = config.invokerContainerDns,
-      name = Some(name))
+      name = Some(name),
+      dockerRunParameters)
   }
 
   /** Cleans up all running wsk_ containers */
@@ -88,6 +91,7 @@ object DockerContainerFactoryProvider extends ContainerFactoryProvider {
   override def getContainerFactory(actorSystem: ActorSystem,
                                    logging: Logging,
                                    config: WhiskConfig,
-                                   instanceId: InstanceId): ContainerFactory =
-    new DockerContainerFactory(instanceId)(actorSystem.dispatcher, logging)
+                                   instanceId: InstanceId,
+                                   dockerRunParameters: Map[String, String]): ContainerFactory =
+    new DockerContainerFactory(instanceId, dockerRunParameters)(actorSystem.dispatcher, logging)
 }

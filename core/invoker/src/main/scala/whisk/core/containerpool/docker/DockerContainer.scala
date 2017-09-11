@@ -58,27 +58,18 @@ object DockerContainer {
              environment: Map[String, String] = Map(),
              network: String = "bridge",
              dnsServers: Seq[String] = Seq(),
-             name: Option[String] = None)(implicit docker: DockerApiWithFileAccess,
-                                          runc: RuncApi,
-                                          ec: ExecutionContext,
-                                          log: Logging): Future[DockerContainer] = {
+             name: Option[String] = None,
+             dockerRunParameters: Map[String, String] = Map())(implicit docker: DockerApiWithFileAccess,
+                                                               runc: RuncApi,
+                                                               ec: ExecutionContext,
+                                                               log: Logging): Future[DockerContainer] = {
     implicit val tid = transid
 
-    val environmentArgs = environment.map {
+    val environmentArgs = environment.flatMap {
       case (key, value) => Seq("-e", s"$key=$value")
-    }.flatten
-
-    val dnsArgs = dnsServers.map(Seq("--dns", _)).flatten
+    }
 
     val args = Seq(
-      "--cap-drop",
-      "NET_RAW",
-      "--cap-drop",
-      "NET_ADMIN",
-      "--ulimit",
-      "nofile=1024:1024",
-      "--pids-limit",
-      "1024",
       "--cpu-shares",
       cpuShares.toString,
       "--memory",
@@ -87,10 +78,11 @@ object DockerContainer {
       s"${memory.toMB}m",
       "--network",
       network) ++
-      dnsArgs ++
       environmentArgs ++
-      name.map(n => Seq("--name", n)).getOrElse(Seq.empty)
-
+      name.map(n => Seq("--name", n)).getOrElse(Seq.empty) ++
+      dockerRunParameters.flatMap {
+        case (key, value) => Seq(key, value)
+      }
     val pulled = if (userProvidedImage) {
       docker.pull(image).recoverWith {
         case _ => Future.failed(BlackboxStartupError(s"Failed to pull container image '${image}'."))

@@ -75,9 +75,20 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
     new MessageFeed("activation", logging, consumer, maximumContainers, 500.milliseconds, processActivationMessage)
   })
 
+  //docker parameters that apply to all containers (does not include: cpu, memory, network, environment)
+  val dnsServers = config.invokerContainerDns
+  val dockerRunParameters = Map(
+    "--cap-drop" -> "NET_RAW",
+    "--cap-drop" -> "NET_ADMIN",
+    "--ulimit" -> "nofile=1024:1024",
+    "--pids-limit" -> "1024") ++
+    dnsServers.map(d => "--dns" -> d).toMap
+
   /** Factory used by the ContainerProxy to physically create a new container. */
   val containerFactory =
-    SpiLoader.get[ContainerFactoryProvider].getContainerFactory(actorSystem, logging, config, instance)
+    SpiLoader
+      .get[ContainerFactoryProvider]
+      .getContainerFactory(actorSystem, logging, config, instance, dockerRunParameters)
   val containerFactoryFunction = containerFactory.createContainer _
   containerFactory.cleanup()
   sys.addShutdownHook(containerFactory.cleanup())

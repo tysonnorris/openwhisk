@@ -50,5 +50,6 @@ trait ContainerFactoryProvider extends Spi {
   def getContainerFactory(actorSystem: ActorSystem,
                           logging: Logging,
                           config: WhiskConfig,
-                          instance: InstanceId): ContainerFactory
+                          instance: InstanceId,
+                          dockerRunParameters: Map[String, String]): ContainerFactory
 }
