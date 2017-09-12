@@ -66,6 +66,9 @@ class DockerContainerFactory(config: WhiskConfig, instance: InstanceId)(implicit
       parameters)
   }
 
+  /** Perform cleanup on init */
+  override def init: Unit = cleanup()
+
   /** Cleans up all running wsk_ containers */
   override def cleanup: Unit = {
     val cleaning = docker.ps(Seq("name" -> s"wsk${instance.toInt}_"))(TransactionId.invokerNanny).flatMap {

@@ -21,6 +21,7 @@ import akka.actor.ActorSystem
 import akka.pattern.ask
 import com.adobe.api.platform.runtime.mesos.MesosClient
 import com.adobe.api.platform.runtime.mesos.Subscribe
+import com.adobe.api.platform.runtime.mesos.SubscribeComplete
 import com.adobe.api.platform.runtime.mesos.Teardown
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
@@ -39,6 +40,7 @@ import whisk.core.entity.UUID
 
 class MesosContainerFactory(config: WhiskConfig, actorSystem: ActorSystem, logging: Logging) extends ContainerFactory {
 
+  val subscribeTimeout = 30.seconds
   val parameters = ContainerFactory.dockerRunParameters(config)
 
   //init mesos framework:
@@ -52,14 +54,14 @@ class MesosContainerFactory(config: WhiskConfig, actorSystem: ActorSystem, loggi
   val mesosClientActor = actorSystem.actorOf(
     MesosClient.props("whisk-loadbalancer-" + UUID(), "whisk-loadbalancer-framework", mesosMaster, "*", 0.minutes))
 
-  mesosClientActor ! Subscribe
-
-  //handle shutdown
-  sys.addShutdownHook({
-    val complete: Future[Any] = mesosClientActor.ask(Teardown)(20.seconds)
-    Await.result(complete, 25.seconds)
-    logging.info(this, "teardown completed!")
-  })
+  //subscribe mesos actor to mesos event stream
+  //TODO: handle subscribe failure
+  mesosClientActor
+    .ask(Subscribe)(subscribeTimeout)
+    .mapTo[SubscribeComplete]
+    .onComplete(complete => {
+      logging.info(this, "subscribe completed successfully...")
+    })
 
   override def createContainer(tid: TransactionId,
                                name: String,
@@ -76,28 +78,29 @@ class MesosContainerFactory(config: WhiskConfig, actorSystem: ActorSystem, loggi
     }
 
     logging.info(this, s"using Mesos to create a container with image ${image}...")
-    val startingTask = MesosTask.create(
+    MesosTask.create(
       mesosClientActor,
       tid,
       image = image,
       userProvidedImage = userProvidedImage,
       memory = memory,
-      cpuShares = 0, //OldContainerPool.cpuShare(config),
+      cpuShares = config.invokerCoreShare.toInt,
       environment = Map("__OW_API_HOST" -> config.wskApiHost),
       network = config.invokerContainerNetwork,
       dnsServers = config.invokerContainerDns,
       name = Some(name),
       parameters)
-
-    logging.info(this, s"created task is completed??? ${startingTask.isCompleted}")
-    startingTask.map(runningTask => {
-      logging.info(this, "returning running task")
-      runningTask
-    })
   }
 
+  override def init(): Unit = Unit
+
   /** cleanup any remaining Containers; should block until complete; should ONLY be run at startup/shutdown */
-  override def cleanup(): Unit = {}
+  override def cleanup(): Unit = {
+    //TODO: make this cleanup hook execute before the ActorSystem is shutdown
+    val complete: Future[Any] = mesosClientActor.ask(Teardown)(20.seconds)
+    Await.result(complete, 25.seconds)
+    logging.info(this, "cleanup completed!")
+  }
 }
 
 object MesosContainerFactoryProvider extends ContainerFactoryProvider {

@@ -81,7 +81,7 @@ class InvokerReactive(config: WhiskConfig, instance: InstanceId, producer: Messa
       .get[ContainerFactoryProvider]
       .getContainerFactory(actorSystem, logging, config, instance)
   val containerFactoryFunction = containerFactory.createContainer _
-  containerFactory.cleanup()
+  containerFactory.init()
   sys.addShutdownHook(containerFactory.cleanup())
 
   /** Sends an active-ack. */

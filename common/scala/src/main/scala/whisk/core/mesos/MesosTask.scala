@@ -28,7 +28,6 @@ import com.adobe.api.platform.runtime.mesos.SubmitTask
 import com.adobe.api.platform.runtime.mesos.TaskDef
 import java.time.Instant
 import org.apache.mesos.v1.Protos.TaskStatus
-import scala.collection.JavaConverters._
 import scala.collection.mutable.MultiMap
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -46,7 +45,7 @@ import whisk.core.entity.ByteSize
 import whisk.core.entity.size._
 
 /**
- * MesosTask implementation of Contaier
+ * MesosTask implementation of Container
  */
 case class Environment()
 case class CreateContainer(image: String, memory: String, cpuShare: String)
@@ -98,15 +97,8 @@ object MesosTask {
       mesosClientActor.ask(SubmitTask(task))(taskLaunchTimeout).mapTo[Running]
 
     launched.map(taskDetails => {
-      val taskHost = taskDetails.hostname //taskDetails.taskStatus.getContainerStatus.getNetworkInfos(0).getIpAddresses(0).getIpAddress
-      val taskPort = taskDetails.taskInfo.getResourcesList.asScala
-        .filter(_.getName == "ports")
-        .iterator
-        .next()
-        .getRanges
-        .getRange(0)
-        .getBegin
-        .toInt
+      val taskHost = taskDetails.hostname
+      val taskPort = taskDetails.hostports(0)
       log.info(this, s"launched task with state ${taskDetails.taskStatus.getState} at ${taskHost}:${taskPort}")
       val containerIp = new ContainerIp(taskHost, taskPort)
       val containerId = new ContainerId(taskId);

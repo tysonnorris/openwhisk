@@ -42,6 +42,9 @@ trait ContainerFactory {
                       userProvidedImage: Boolean,
                       memory: ByteSize)(implicit config: WhiskConfig, logging: Logging): Future[Container]
 
+  /** perform any initialization */
+  def init(): Unit
+
   /** cleanup any remaining Containers; should block until complete; should ONLY be run at startup/shutdown */
   def cleanup(): Unit
 }
