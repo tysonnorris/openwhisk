@@ -122,7 +122,7 @@ trait ContainerApi { container: Container =>
                               retry: Boolean = false): Future[RunResult] = {
     val started = Instant.now()
     val http = httpConnection.getOrElse {
-      val conn = new HttpUtils(s"${ip.asString}:8080", timeout, 1.MB)
+      val conn = new HttpUtils(s"${ip.asString}:${ip.port}", timeout, 1.MB)
       httpConnection = Some(conn)
       conn
     }
